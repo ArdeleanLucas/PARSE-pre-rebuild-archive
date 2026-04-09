@@ -8,7 +8,7 @@
 
 | Gate | Command | Result |
 |---|---|---|
-| Frontend/unit/integration tests | `npm run test -- --run` | ✅ 21 files, 103 tests passed |
+| Frontend/unit/integration tests | `npm run test -- --run` | ✅ 22 files, 113 tests passed |
 | TypeScript | `./node_modules/.bin/tsc --noEmit` | ✅ clean |
 | API regression | `npm run test:api` | ✅ 24 tests passed |
 
