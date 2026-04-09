@@ -1,0 +1,25 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request. Look for:
+            - Logic errors and bugs
+            - Security vulnerabilities
+            - Missing edge case handling
+            - Code clarity issues
+
+            Post your findings as inline review comments on the relevant lines.
+          claude_args: "--max-turns 5"
