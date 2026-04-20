@@ -1,147 +1,143 @@
 # ParseUI — Wiring Task List
 
 > **File:** `src/ParseUI.tsx`
-> **Branch target:** branch from `origin/main` (historical note: `feat/parseui-unified-shell` was merged and deleted)
-> **Last audited:** 2026-05-14
-> **Items:** 46 total — 9 data, 7 annotate actions, 14 compare actions, 9 actions-menu items, 3 tags-mode, 4 minor cleanup
-> **Status:** historical recovery/audit checklist — do not recreate the deleted rolling branch.
+> **Branch target:** branch from `origin/main`
+> **Last audited:** 2026-07-20
+> **Items:** 46 total — 35 done, 10 partial, 1 still todo
+> **Status:** living checklist — update after each PR that touches ParseUI wiring.
 
-All items reference line numbers in the `src/ParseUI.tsx` snapshot that existed when this memo was authored.
-For new work, compare against the current file on `main` / your fresh feature branch from `origin/main`.
-Each item lists the real hook or store it should call instead of the current mock/stub.
+All items reference `src/ParseUI.tsx` on `main`. Line numbers are approximate and
+shift with each PR — search by function/variable name instead of relying on exact lines.
 
 ---
 
-## 🔴 Section 1 — Data Still Mock / Hardcoded (9 items)
+## ✅ Section 1 — Data Still Mock / Hardcoded (9 items)
 
-| # | What | Line(s) | Real source |
+| # | What | Status | Evidence |
 |---|---|---|---|
-| 1 | `CONCEPTS` array used directly (not derived from store) | 863, 865 | `configStore` → `concepts` field (array of `{id, label}`) |
-| 2 | `SPEAKERS.length` in speaker-count display span | 1300 | `speakers.length` from `useConfigStore` |
-| 3 | `SPEAKERS` in speaker select `<option>` list | 1311 | `speakers` array from `useConfigStore` (partially fixed — verify render) |
-| 4 | `MOCK_FORMS` object — IPA, utterances, arabicSim, persianSim, cognate, flagged | 51–57, 1158 | `annotationStore` (IPA / utterances) + `enrichmentStore` (sims) + compute results (cognate / flagged) |
-| 5 | `reviewed = 0` in progress bar numerator | 864 | Count of concepts where **every** speaker has at least one annotation interval in `annotationStore` |
-| 6 | Reference forms hardcoded — Arabic `رماد` and Persian `خاکستر` | 1129–1138 | `enrichmentStore` → per-concept `arabic_ref` / `persian_ref` fields |
-| 7 | Borrowings alert text — hardcoded `Fail01` speaker name | ~1210 | `useComputeJob` result or `enrichmentStore` per-concept borrowing data |
-| 8 | Status panel — `"11 speakers / 82 concepts"` hardcoded strings | 1370–1376 | `speakers.length` + `concepts.length` from `useConfigStore` |
-| 9 | `"Missing"` badge on concept header in Annotate view | 691 | Check `annotationStore.records[activeSpeaker]` — badge only when no interval exists for this concept |
+| 1 | `CONCEPTS` array used directly | ✅ DONE | Store-derived via `useConfigStore` → `rawConcepts` + `useMemo` |
+| 2 | `SPEAKERS.length` in speaker-count display | ✅ DONE | Uses `speakers.length` from store |
+| 3 | `SPEAKERS` in speaker select `<option>` list | ✅ DONE | `speakers.map(s => <option>)` |
+| 4 | `MOCK_FORMS` object | 🟡 PARTIAL | `MOCK_FORMS` removed; `speakerForms` built from `annotationRecords` + `enrichmentData`, but `flagged` is concept-tag-based, not per-speaker annotation flag |
+| 5 | `reviewed = 0` in progress bar | 🟡 PARTIAL | Now `concepts.filter(c => c.tag === 'confirmed').length` — tag-based, not "every speaker has an interval" logic as originally specified |
+| 6 | Reference forms hardcoded Arabic/Persian | ✅ DONE | `resolveReferenceForms()` from `enrichments.reference_forms` |
+| 7 | Borrowings alert — hardcoded `Fail01` | ✅ DONE | Borrowings panel is data-driven via `borrowingCandidates` |
+| 8 | Status panel hardcoded strings | ✅ DONE | Dynamic `speakers.length` + `concepts.length` |
+| 9 | `"Missing"` badge on concept header | ✅ DONE | Badge based on `annotated` boolean from `findAnnotationForConcept` |
 
 ---
 
-## 🔴 Section 2 — Annotate Mode Actions Not Wired (7 items)
+## ✅ Section 2 — Annotate Mode Actions (7 items)
 
-| # | What | Line(s) | Real hook / store call |
+| # | What | Status | Evidence |
 |---|---|---|---|
-| 10 | IPA field — local `useState` only; not loaded from or saved to store | 712–718 | Load from `annotationStore.records[speaker].tiers.ipa[conceptId]`; onChange → update store |
-| 11 | Ortho field — same issue as IPA | 721–728 | Load from `annotationStore.records[speaker].tiers.ortho[conceptId]`; onChange → update store |
-| 12 | **Save Annotation** button — no `onClick` handler | 733 | `annotationStore.saveSpeaker(speaker)` + create/update interval for active concept |
-| 13 | **Mark Done** button — no `onClick` handler | 736 | `tagStore.tagConcept(tagId, conceptId)` with a `"confirmed"` tag |
-| 14 | **SkipBack** (prev segment) button — no `onClick` | 555 | Seek WaveSurfer to previous region start via `regionsRef` |
-| 15 | Right-rail **Save annotations** button — no handler | ~1471 | Same as item 12 — `annotationStore.saveSpeaker(speaker)` |
-| 16 | Spectrogram toggle — renders CSS placeholder only | 604 | Port `js/shared/spectrogram-worker.js` → `src/workers/spectrogram-worker.ts` + `useSpectrogram` hook; wire to canvas |
+| 10 | IPA field — local state only | 🟡 PARTIAL | Loads from store via `findAnnotationForConcept`; local `useState` for editing; persisted only on Save click (design choice, not a bug) |
+| 11 | Ortho field — same issue | 🟡 PARTIAL | Same pattern as IPA — local edit, persist on Save |
+| 12 | **Save Annotation** button | ✅ DONE | Creates/updates intervals + `saveSpeaker(speaker)` |
+| 13 | **Mark Done** button | ✅ DONE | `tagConcept('confirmed', concept.key)` |
+| 14 | **SkipBack** (prev segment) button | ✅ DONE | Previous interval lookup + seek via `skip()` |
+| 15 | Right-rail **Save annotations** button | ✅ DONE | Calls `saveSpeaker(speaker)` |
+| 16 | Spectrogram toggle | ✅ DONE | `useSpectrogram` hook + canvas rendering when `spectroOn` |
 
 ---
 
-## 🔴 Section 3 — Compare Mode Actions Not Wired (14 items)
+## ✅ Section 3 — Compare Mode Actions (14 items)
 
-| # | What | Line(s) | Real hook / store call |
+| # | What | Status | Evidence |
 |---|---|---|---|
-| 17 | **Accept** concept button — no handler | 1116 | `tagStore.tagConcept(tagId, conceptId)` with `"confirmed"` tag |
-| 18 | **Flag** concept header button — no handler | 1113 | `tagStore.tagConcept(tagId, conceptId)` with `"problematic"` tag |
-| 19 | Reference form audio **play** buttons (`Volume2`) — no handler | 1127, 1135 | `new Audio(referenceAudioUrl).play()` or route through `useWaveSurfer` for reference WAV |
-| 20 | Cognate **Accept grouping** button — no handler | 1190 | Write cognate decision to `annotationStore` or `decisions.json` via API |
-| 21 | Cognate **Split** button — no handler | 1193 | Same — write split decision |
-| 22 | Cognate **Merge** button — no handler | 1196 | Same — write merge decision |
-| 23 | Cognate **Cycle** button — no handler | 1199 | Same — cycle through grouping options |
-| 24 | Borrowings section — static, not reactive to concept selection | 1207 | Re-fetch / filter `enrichmentStore` data when `activeConcept` changes |
-| 25 | **Notes** field — local state, not persisted | 1220 | `annotationStore` notes field or `decisions.json` via POST |
-| 26 | Right-rail **Compute: Run** button — only closes menu | 1351 | `useComputeJob` → `POST /api/compute/contact-lexemes` + poll for result |
-| 27 | Right-rail **Compute: Refresh** button — no handler | 1354 | Re-fetch enrichments via `enrichmentStore.load()` |
-| 28 | Right-rail **Save decisions** button — no handler | 1407 | `useImportExport` → `POST /api/export/decisions` |
-| 29 | Right-rail **Load decisions** button — no handler | 1405 | `useImportExport` → file picker → import decisions JSON |
-| 30 | Per-speaker row **flag** — `f.flagged` is read-only display, never mutated | 1176 | Write flag to annotation record in `annotationStore`; toggle on click |
+| 17 | **Accept** concept button | ✅ DONE | `tagConcept('confirmed', concept.key)` |
+| 18 | **Flag** concept header button | ✅ DONE | `tagConcept('problematic', concept.key)` |
+| 19 | Reference form audio **play** buttons | ✅ DONE | `new Audio(entry.data.audioUrl).play()` |
+| 20 | Cognate **Accept grouping** button | ✅ DONE | Patches `cognate_decisions` + `save()` |
+| 21 | Cognate **Split** button | ✅ DONE | `decision: 'split'` + `save()` |
+| 22 | Cognate **Merge** button | ✅ DONE | `decision: 'merge'` + `save()` |
+| 23 | Cognate **Cycle** button | ✅ DONE | Computes next option + `save()` |
+| 24 | Borrowings section reactive to concept | ✅ DONE | `borrowingCandidates` depends on `[concept, enrichmentData]` |
+| 25 | **Notes** field persisted | 🟡 PARTIAL | Persisted to `localStorage` (`parseui-compare-notes-v1`), not to store/API decisions |
+| 26 | Right-rail **Compute: Run** button | ✅ DONE | `startComputeJob()` via `useComputeJob` |
+| 27 | Right-rail **Compute: Refresh** button | ✅ DONE | `useEnrichmentStore.getState().load()` |
+| 28 | Right-rail **Save decisions** button | ✅ DONE | Creates JSON blob + downloads `parse-decisions.json` |
+| 29 | Right-rail **Load decisions** button | ✅ DONE | File picker → parse JSON → save to enrichment store |
+| 30 | Per-speaker row **flag** | 🟡 PARTIAL | Clickable, toggles `tagConcept`/`untagConcept` — but mutates concept tag globally, not per-speaker annotation record flag |
 
 ---
 
-## 🔴 Section 4 — Actions Menu Items (All Just Close Dropdown) (9 items)
+## ✅ Section 4 — Actions Menu Items (9 items)
 
-| # | Menu label | Real action |
-|---|---|---|
-| 31 | **Import Speaker Data** | Trigger `OnboardingFlow` modal or `POST /api/import/upload` |
-| 32 | **Run Audio Normalization** | `POST /api/normalize` → poll job → show progress toast |
-| 33 | **Run Orthographic STT** | `POST /api/stt` (razhan model) → poll → populate ortho fields |
-| 34 | **Run IPA Transcription** | `POST /api/pipeline/run` (`ipa_only`) → poll → populate IPA fields |
-| 35 | **Run Full Pipeline** | Sequential orchestration of items 31 → 32 → 33 → 34 with status per step |
-| 36 | **Run Cross-Speaker Match** | `POST /api/compute/contact-lexemes` via `useComputeJob` |
-| 37 | **Load Decisions** | File picker → parse decisions JSON → hydrate stores |
-| 38 | **Save Decisions** | `GET /api/export/lingpy` (LingPy TSV) **or** decisions JSON download |
-| 39 | **Reset Project** | Confirmation modal → clear all Zustand stores → reset `localStorage` |
-
----
-
-## 🔴 Section 5 — Tags Mode Concept Assignment Not Wired (3 items)
-
-| # | What | Line(s) | Real hook / store call |
+| # | Menu label | Status | Evidence |
 |---|---|---|---|
-| 40 | Concept checkboxes — no `onChange`, no `tagConcept` call | 433 | `tagStore.tagConcept(tagId, conceptId)` / `tagStore.untagConcept(tagId, conceptId)` on toggle |
-| 41 | **Apply to selected** button — no handler | 411 | Iterate checked concept IDs → call `tagStore.tagConcept(tagId, conceptId)` for each |
-| 42 | **Clear selection** button — no handler | 408 | Reset local checkbox state → all unchecked |
+| 31 | **Import Speaker Data** | ✅ DONE | Opens `SpeakerImport` modal via `openImportModal` |
+| 32 | **Run Audio Normalization** | ✅ DONE | `normalizeJob.run()` → `startNormalize` + `pollNormalize` |
+| 33 | **Run Orthographic STT** | ✅ DONE | `sttJob.run()` → `startSTT` + `pollSTT` |
+| 34 | **Run IPA Transcription** | ✅ DONE | `ipaJob.run()` → `startCompute('ipa_only')` |
+| 35 | **Run Full Pipeline** | 🟡 PARTIAL | Single backend job `startCompute('full_pipeline')` — not sequential 31→32→33→34 orchestration as originally described |
+| 36 | **Run Cross-Speaker Match** | ✅ DONE | `crossSpeakerJob.run()` → `startCompute('contact-lexemes')` |
+| 37 | **Load Decisions** | ✅ DONE | File picker → parse JSON → save to store |
+| 38 | **Save Decisions** | 🔴 STILL TODO | Button only closes dropdown — no save/export action wired |
+| 39 | **Reset Project** | 🟡 PARTIAL | Clears Zustand stores but does not clear `localStorage` |
 
 ---
 
-## 🟡 Section 6 — Minor Cleanup / Stale Comments (4 items)
+## ✅ Section 5 — Tags Mode Concept Assignment (3 items)
 
-| # | What | Line(s) |
-|---|---|---|
-| 43 | Old TODO comment block about mock waveform in `AnnotateView` JSDoc | 451–468 |
-| 44 | `{/* TODO: Replace mock with real hook */}` comment still in render tree | 592–595 |
-| 45 | `useEffect` in `AIChat` depends on stale `messages` local array instead of `chatSession.messages` | 127 |
-| 46 | `SPEAKERS.length` → `speakers.length` (uppercase constant → store-derived) in speaker count `<span>` | 1300 |
+| # | What | Status | Evidence |
+|---|---|---|---|
+| 40 | Concept checkboxes — `onChange` | ✅ DONE | Toggles `tagConcept` / `untagConcept` |
+| 41 | **Apply to selected** button | ✅ DONE | Iterates `checkedConceptIds` → `tagConcept` each |
+| 42 | **Clear selection** button | ✅ DONE | `setCheckedConceptIds(new Set())` |
 
 ---
 
-## Priority Order (suggested)
+## ✅ Section 6 — Minor Cleanup / Stale Comments (4 items)
+
+| # | What | Status | Evidence |
+|---|---|---|---|
+| 43 | Old TODO comment block about mock waveform | ✅ DONE | Not present in current file |
+| 44 | `{/* TODO: Replace mock with real hook */}` comment | ✅ DONE | Removed. One residual TODO remains: `// TODO: wire to real borrowing data from enrichments` (~line 1481) |
+| 45 | `useEffect` in `AIChat` depends on stale `messages` | ✅ DONE | Now depends on `chatSession.messages` |
+| 46 | `SPEAKERS.length` → `speakers.length` | ✅ DONE | No `SPEAKERS` constant remaining |
+
+---
+
+## Priority Order (updated)
 
 ```
-P0 — Blocking basic use
-  #10, #11, #12  (IPA/Ortho load + Save — can't annotate without these)
-  #3             (speaker dropdown — verify fix landed)
-  #9             (Missing badge — misleads user)
+DONE — No action needed
+  #1,#2,#3,#6,#7,#8,#9   (Section 1 data swaps)
+  #12,#13,#14,#15,#16     (Section 2 annotate actions)
+  #17–#24,#26–#29         (Section 3 compare actions)
+  #31–#34,#36,#37         (Section 4 actions menu)
+  #40,#41,#42             (Section 5 tags)
+  #43,#44,#45,#46         (Section 6 cleanup)
 
-P1 — Data correctness
-  #1, #2, #4, #5, #6, #7, #8  (all mock data swaps)
-  #46            (trivial SPEAKERS → speakers)
+PARTIAL — Acceptable design choices or minor gaps
+  #4   (flagged is concept-tag-based, not per-speaker)
+  #5   (reviewed count is tag-based, not interval-coverage)
+  #10  (IPA: local edit → persist on Save — reasonable UX)
+  #11  (Ortho: same pattern)
+  #25  (Notes: localStorage only, not API-persisted)
+  #30  (Per-speaker flag: global concept tag, not per-speaker)
+  #35  (Full Pipeline: single job, not sequential orchestration)
+  #39  (Reset: clears stores but not localStorage)
 
-P2 — Compare mode functionality
-  #17–#30        (all compare actions)
-
-P3 — Actions menu
-  #31–#39        (pipeline orchestration)
-
-P4 — Tags mode
-  #40–#42
-
-P5 — Spectrogram (own MC task — MC-297)
-  #16
-
-P6 — Cleanup
-  #43, #44, #45
+STILL TODO — Needs fix
+  #38  (Save Decisions in Actions menu — button is a no-op)
 ```
 
 ---
 
 ## Related Files
 
-| File | Role |
-|---|---|
-| `src/ParseUI.tsx` | Primary file — all line refs above point here |
-| `src/hooks/useWaveSurfer.ts` | WaveSurfer lifecycle — items 14, 19 |
-| `src/hooks/useAnnotationSync.ts` | Annotation persistence — items 10–12, 25 |
-| `src/hooks/useChatSession.ts` | Chat — item 45 |
-| `src/hooks/useImportExport.ts` | Import/export — items 28, 29, 37, 38 |
-| `src/stores/annotationStore.ts` | Annotation records — items 4, 9–13, 20–23, 25, 30 |
-| `src/stores/configStore.ts` | Speakers + concepts — items 1–3, 8 |
-| `src/stores/enrichmentStore.ts` | Enrichments + reference forms — items 4, 6, 7, 24, 27 |
-| `src/stores/tagStore.ts` | Tag assignments — items 13, 17, 18, 40–42 |
-| `src/workers/spectrogram-worker.ts` | Spectrogram — item 16 (must be created) |
-| `python/server.py` | All API endpoints — items 26, 31–38 |
+| File | Role | Exists? |
+|---|---|---|
+| `src/ParseUI.tsx` | Primary file — all items reference this | ✅ |
+| `src/hooks/useWaveSurfer.ts` | WaveSurfer lifecycle — items 14, 19 | ✅ |
+| `src/hooks/useAnnotationSync.ts` | Annotation persistence — items 10–12, 25 | ✅ |
+| `src/hooks/useChatSession.ts` | Chat — item 45 | ✅ |
+| `src/hooks/useImportExport.ts` | Import/export — items 28, 29, 37, 38 | ✅ |
+| `src/stores/annotationStore.ts` | Annotation records — items 4, 9–13, 20–23, 25, 30 | ✅ |
+| `src/stores/configStore.ts` | Speakers + concepts — items 1–3, 8 | ✅ |
+| `src/stores/enrichmentStore.ts` | Enrichments + reference forms — items 4, 6, 7, 24, 27 | ✅ |
+| `src/stores/tagStore.ts` | Tag assignments — items 13, 17, 18, 40–42 | ✅ |
+| `src/workers/spectrogram-worker.ts` | Spectrogram — item 16 | ✅ |
+| `python/server.py` | All API endpoints — items 26, 31–38 | ✅ |
