@@ -1,6 +1,8 @@
 # Docs Audit — 2026-04-20
 
-**Scope:** every file under `docs/` (6 top-level + 22 in `plans/` + 13 in `plans/oda/` = 41 files).
+**Scope:** the 41 pre-existing files that were under `docs/` when this audit was written (6 top-level + 22 in `plans/` + 13 in `plans/oda/`).
+
+**Status note (updated after PR #54 merged):** Stage 1 has already landed on `main`, so the live tree now includes `docs/archive/` and this audit file. Treat the 41-file count as the audited pre-archive set, not the current total file count under `docs/`.
 
 **Project goals driving the audit:**
 
@@ -11,16 +13,18 @@
 
 Verdict legend: **KEEP** · **UPDATE** · **OBSOLETE** · **UNCERTAIN**.
 
+**Out of scope:** repo-root `doc/TASK.md` lives outside `docs/` and is not graded here. It should be treated as a separate audit target before anyone uses it as the current source of truth for ParseUI wiring.
+
 ---
 
 ## Code-state reality check (used to grade each doc)
 
 - **React UI is the live surface.** Root `index.html` bootstraps `src/main.tsx` only. `src/` has all modes (Annotate, Compare, Tags) as React components with Zustand stores, typed API client, Vitest coverage.
-- **Legacy vanilla JS is still on disk but orphaned from the React app.** `js/` (25 files, ~1.3 MB), `parse.html`, `compare.html`, `review_tool_dev.html` still exist. Only `compare.html` (14 `<script>` refs) and `review_tool_dev.html` (12 refs) load from `js/`. `parse.html` is a self-contained legacy monolith. `vite.config.ts:5–23` ships a `forceSpaCompareRoute` plugin whose comment openly states it exists *because* `compare.html` is still at the repo root.
+- **Legacy vanilla JS is still on disk but orphaned from the React app.** `js/` (25 files, ~984 KB on disk in this audit checkout), `parse.html`, `compare.html`, `review_tool_dev.html` still exist. Only `compare.html` (14 `<script>` refs) and `review_tool_dev.html` (12 refs) load from `js/`. `parse.html` is a self-contained legacy monolith. `vite.config.ts:5–23` ships a `forceSpaCompareRoute` plugin whose comment openly states it exists *because* `compare.html` is still at the repo root.
 - **Launchers are split.** `scripts/parse-run.sh` and `run-parse.sh` launch the React stack correctly (Python `server.py` + `npx vite`). `start_parse.sh` and `Start Review Tool.bat` still try to launch a non-existent `python/thesis_server.py` and open `review_tool_dev.html`; both bail with an error on a fresh checkout and each already carries a comment pointing users to the React launcher.
-- **No mock data in runtime code.** `grep` for `mock|fixture|demo|stub|fakeData` across `src/` non-test files returns zero hits. `src/ParseUI.tsx:54` explicitly asserts `// No fallback data — workspace must supply real speakers and concepts via /api/config.` Python runtime code is equally clean — all `sample`/`mock` hits are either `sample_rate` (DSP) or test-only.
+- **No mock data in runtime code.** `grep` for `mock|fixture|demo|stub|fakeData` across `src/` non-test files returns zero hits. `src/ParseUI.tsx:54` explicitly asserts `// No fallback data — workspace must supply real speakers and concepts via /api/config.` Python runtime grep is likewise clean for `mock|fixture|demo|stub`; remaining `sample*` hits are DSP/sample-rate related rather than fixture data.
 - **xAI and OpenAI are both registered providers.** `python/ai/provider.py:1091` (`XAIProvider` hitting `https://api.x.ai/v1`, env `XAI_API_KEY`) and `python/ai/provider.py:929` (`OpenAIProvider`). Dispatcher at `provider.py:1254` routes `xai`/`grok`/`x.ai` to `XAIProvider`. LLM/chat auth UI in `src/ParseUI.tsx:243,518,537` and `src/components/annotate/ChatPanel.tsx:57–59` already exposes both providers for key entry.
-- **Speaker onboarding exists but is provider-blind.** `POST /api/onboard/speaker` (`python/server.py:2166–2414`) accepts `speaker_id` + audio WAV + optional CSV. React UI at `src/components/compare/SpeakerImport.tsx:106–159` calls `onboardSpeaker()` (`src/api/client.ts:290–316`). There is **no `provider` parameter** on the call or form — onboarding uses whichever provider the user last authed globally. To meet goal #3 this needs an explicit xAI/OpenAI selector in `SpeakerImport.tsx` and a `provider` field on the `/api/onboard/speaker` payload.
+- **Speaker onboarding is currently provider-agnostic.** `POST /api/onboard/speaker` (`python/server.py:2166–2414`) accepts `speaker_id` + audio WAV + optional CSV. React UI at `src/components/compare/SpeakerImport.tsx:106–159` calls `onboardSpeaker()` (`src/api/client.ts:290–316`). There is **no `provider` parameter** on the call or form, and the current background job only scaffolds annotations / source-index entries. To meet goal #3 the product needs an explicit xAI/OpenAI selector in `SpeakerImport.tsx` plus a clear decision about where that provider choice is consumed or persisted in the onboarding flow.
 
 ---
 
@@ -54,14 +58,14 @@ Verdict legend: **KEEP** · **UPDATE** · **OBSOLETE** · **UNCERTAIN**.
 | [`legacy-entrypoint-inventory.md`](plans/legacy-entrypoint-inventory.md) | **KEEP** | Canonical list of every remaining `parse.html`/`compare.html`/`js/`/`localhost:8766` reference. Directly supports goal #2. Highly actionable — use as the checklist for the vanilla-JS removal PR. |
 | [`lexibank-setup.md`](plans/lexibank-setup.md) | **KEEP** | Operational setup doc for the Python-side CLDF/CLEF dataset pipeline. No JS surface, no mock data. |
 | [`mc-308-audio-pipeline-fix.md`](archive/plans/mc-308-audio-pipeline-fix.md) | **OBSOLETE** | All criteria marked done; shipped PR #43. |
-| [`parsebuilder-todo.md`](plans/parsebuilder-todo.md) | **UPDATE** | Active owner TODO, but references retired C5/C6 gate workflow and stale completion dates. Refresh to the new goals (vanilla-JS deletion, xAI/OpenAI onboarding, no mock data). |
-| [`parseui-current-state-plan.md`](plans/parseui-current-state-plan.md) | **UPDATE** | Best candidate for the canonical React-side plan. Aligned with React+Python. §1 and §3 marked done (PR #33, #38). Refresh with explicit sections for "remove vanilla JS entrypoints" and "xAI/OpenAI onboarding selector"; drop C5/C6/C7 vocabulary if that process is retired. |
+| [`parsebuilder-todo.md`](plans/parsebuilder-todo.md) | **UPDATE** | Active owner TODO, but its gate language and completion notes have drifted from the live `AGENTS.md` workflow. Refresh it against the current goals (vanilla-JS deletion, xAI/OpenAI onboarding, no mock data). |
+| [`parseui-current-state-plan.md`](plans/parseui-current-state-plan.md) | **UPDATE** | Best candidate for the canonical React-side plan. Aligned with React+Python. §1 and §3 marked done (PR #33, #38). Refresh with explicit sections for "remove vanilla JS entrypoints" and "xAI/OpenAI onboarding selector"; reconcile C5/C6/C7 vocabulary with the live `AGENTS.md` policy instead of assuming those gates are retired. |
 | [`parseui-wiring-todo.md`](archive/plans/parseui-wiring-todo.md) | **OBSOLETE** | Self-labeled archive of the vanilla-JS-era wiring TODO; points to the current-state plan. |
 | [`pr38-dispatch-specs.md`](archive/plans/pr38-dispatch-specs.md) | **OBSOLETE** | Implementation brief for landed PR #38. |
 | [`pr38-role-split.md`](archive/plans/pr38-role-split.md) | **OBSOLETE** | Agent-handoff coordination for landed PR #38. |
 | [`react-vite-pivot.md`](plans/react-vite-pivot.md) | **UPDATE** | 47 KB foundational plan for the JS→React pivot. Load-bearing technical content (Python API contract + `js/`→React migration map) is still useful but phase tracker is stale. Trim to: (a) Python API contract as authoritative reference, (b) `js/`→React migration map as the deletion checklist. Drop branch/phase churn. |
 | [`repo-cleanup-preflight.md`](archive/plans/repo-cleanup-preflight.md) | **OBSOLETE** | One-time 2026-04-09 branch snapshot; list now fully pruned. |
-| [`repo-state-cleanup-and-architecture-unification.md`](plans/repo-state-cleanup-and-architecture-unification.md) | **UPDATE** | Phase-5 task 5.1/5.2 is *exactly* the vanilla-JS deletion + Python-serves-`dist/` cutover goal #2 needs. Phases 0–4 and 6 are largely done. Strip to the Phase-5 plan; remove C5/C6 gating language now that the architecture is confirmed. |
+| [`repo-state-cleanup-and-architecture-unification.md`](plans/repo-state-cleanup-and-architecture-unification.md) | **UPDATE** | Phase-5 task 5.1/5.2 is *exactly* the vanilla-JS deletion + Python-serves-`dist/` cutover goal #2 needs. Phases 0–4 and 6 are largely done. Strip to the Phase-5 plan and reconcile any C5/C6 wording with the live `AGENTS.md` policy instead of assuming those gates are gone. |
 | [`worktree-setup.md`](plans/worktree-setup.md) | **UPDATE** | Multi-agent worktree ops doc. Still useful but references stale branch names and the uppercase archival clone. Trim historical-notes section; confirm the current agent roster. |
 
 ---
@@ -106,13 +110,13 @@ Roughly **59 %** of `docs/` is historical — documentation of landed work, fini
 
 ## Execution plan
 
-Five stages, each a single PR. Each stage is independently mergeable and has its own rollback. The order is chosen so risky deletions happen only after provider selection and doc archival land safely.
+Five stages total. **Stage 1 has already landed via PR #54** (`docs/archive-obsolete-2026-04-20`), so the remaining execution work is Stages 2–5. The order below keeps risky deletions behind provider-selection work and the current PARSE release gates.
 
-The `docs/` changes live in this branch's follow-up PRs; code changes live in their own PRs. None of this is in this audit PR.
+This PR still only adds the audit + living execution plan. Since opening, Stage 1 has already been executed on `main`; the remaining stages are intentionally separate follow-up PRs.
 
 ### Preflight — legacy-entrypoint inventory (evidence for Stage 3)
 
-`rg` across the repo for `parse.html|compare.html|review_tool_dev.html|\"js/` (excluding this audit file and the `js/` internals themselves) finds **17 files** referencing legacy entrypoints:
+The table below inventories the main repo files still implicated in legacy entrypoints. Treat the list as authoritative; the exact grep count shifts as archival/docs-cleanup work lands.
 
 | File | Why it matters | Action |
 |---|---|---|
@@ -130,10 +134,12 @@ This list supersedes the stale copy in `plans/legacy-entrypoint-inventory.md`.
 
 ---
 
-### Stage 1 — Archive obsolete docs ✅ [PR #54](https://github.com/ArdeleanLucas/PARSE/pull/54) open
+### Stage 1 — Archive obsolete docs (completed in PR #54)
 
 **Branch:** `docs/archive-obsolete-2026-04-20`
 **Goal:** Move the 24 OBSOLETE files to `docs/archive/` so the surviving plans are easier to find and trust.
+
+**Status:** merged to `main` in PR #54 (merge commit `187a076`). Leave the plan here as a record because later stages now depend on the `docs/archive/` layout that exists on `main`.
 
 **Structure:**
 
@@ -153,27 +159,27 @@ docs/archive/
     pr38-dispatch-specs.md
     pr38-role-split.md
     repo-cleanup-preflight.md
-    oda/              # entire folder: b1–b9, coordination, oda-core, phase-0
-                      # (rules.md handled in Stage 4 — lift to AGENTS.md then archive)
+    oda/              # archived in PR #54: b1–b5, b7–b9, coordination, oda-core, phase-0
+                      # (`b6-speaker-import.md` stays active; `rules.md` handled in Stage 4)
 ```
 
 **Steps:**
 
 1. `git mv` each of the 24 files into `docs/archive/` preserving subfolder layout.
 2. Add `docs/archive/README.md` explaining: "Archived 2026-04-20 based on [`../DOCS_AUDIT_2026-04-20.md`](../DOCS_AUDIT_2026-04-20.md). These documents describe landed work, completed cleanups, or the pre-React vanilla-JS architecture. Preserved for history. Do not use as plans."
-3. Grep for any link to a moved file from a non-archived doc — there are a few (e.g. `repo-state-cleanup-and-architecture-unification.md` references `repo-cleanup-preflight.md`, `parseui-current-state-plan.md` references `parsebuilder-todo.md`). Update those references to the new `../archive/...` path.
+3. Grep for any link to a moved file from a non-archived doc — there are a few (for example `repo-state-cleanup-and-architecture-unification.md` references `repo-cleanup-preflight.md`). Update those references to the new `../archive/...` path.
 4. No code changes. No tests to run.
 
 **Risk:** minimal — git history is unaffected by `git mv`. If someone cites an old URL, it now 404s; add a line in the main README pointing to `docs/archive/` if external links exist.
 
-**Exit criteria:** all 24 files in `docs/archive/`, `docs/plans/oda/rules.md` still present (handled by Stage 4), CI green.
+**Exit criteria:** all 24 Stage-1 files in `docs/archive/`; `docs/plans/oda/b6-speaker-import.md` and `docs/plans/oda/rules.md` still present for later handling; CI green.
 
 ---
 
 ### Stage 2 — xAI/OpenAI speaker-onboarding selector (backend + frontend + tests)
 
 **Branch:** `feat/onboard-speaker-provider-selector`
-**Goal:** Close project goal #3. The speaker-onboarding endpoint and UI both accept an explicit `provider` choice (`xai` | `openai`), with validation that the selected provider has a configured API key.
+**Goal:** Close project goal #3. The speaker-onboarding UI/contract accepts an explicit `provider` choice (`xai` | `openai`) and records or validates that choice in a way that future provider-dependent onboarding steps can honor.
 
 **Backend changes (`python/`):**
 
@@ -182,7 +188,7 @@ docs/archive/
    - If absent → `400 {"error":"provider is required","allowed":["xai","openai"]}`.
    - If unknown → `400 {"error":"unsupported provider","allowed":[...]}`.
    - If the corresponding env key is missing (`XAI_API_KEY` for `xai`, `OPENAI_API_KEY` for `openai`) → `400 {"error":"provider not configured","provider":"xai"}` so the UI can route the user to the auth flow.
-2. `python/server.py:1633` `_run_onboard_speaker_job` — take `provider: str` argument and pass it through to the AI calls it makes (currently pulls from global config; override at the job scope only, do not mutate global).
+2. `python/server.py:1633` `_run_onboard_speaker_job` — extend the job payload/result to carry `provider: str` even though the current implementation is scaffolding-only. That prevents future provider-dependent onboarding steps from inferring global auth state implicitly.
 3. `python/ai/provider.py` — add a small helper `get_provider_for(name: str, config)` that returns the `OpenAIProvider` or `XAIProvider` instance for `name`, so the onboarding job can request one by name without touching global state.
 4. Tests in `python/test_server.py` (or a new `python/test_onboard_speaker.py`):
    - missing `provider` → 400
@@ -202,13 +208,15 @@ docs/archive/
    - disables unauthed providers with inline hint
    - submits `provider` field in FormData
 
+**Current gate note:** `AGENTS.md` still marks `src/components/compare/*` as stable / do-not-touch pre-C6. Treat the `SpeakerImport.tsx` UI slice as gated behind an explicit Lucas exception (or a later gate change). The backend/client contract work can still be prepared independently.
+
 **Docs:**
 
 - Update `docs/ONBOARDING_PLAN.md` §"AI provider" open question to resolved requirement: "user must choose xAI or OpenAI at import time; no implicit default; Ollama deferred". Covered by Stage 4 but flag in PR description.
 
 **Risk:** low — additive field on an existing endpoint. Backwards-compat note: any existing automated caller must add `provider`. No such callers exist outside the React UI (grepped).
 
-**Exit criteria:** new tests green; manual smoke in Vite dev (upload a real WAV + CSV with each provider selected, confirm job completes using that provider). `npm run test` + `npm run test:api:live` + `python3 -m pytest python/` all pass.
+**Exit criteria:** new tests green; manual smoke in Vite dev (upload a real WAV + CSV with each provider selected, confirm the selected provider is captured/validated as intended by the updated contract). `npm run test` + `npm run test:api:live` + `python3 -m pytest python/` all pass.
 
 ---
 
@@ -219,6 +227,7 @@ docs/archive/
 
 **Preflight gate (must all pass before deletion):**
 
+- **Lucas clears C5 + C6 explicitly.** Current `AGENTS.md` blocks C7 cleanup / legacy deletion until those manual gates are passed.
 - Stage 1 merged (archived docs reference clean legacy inventory).
 - Stage 2 merged (onboarding tested against the React UI as the only frontend).
 - A recent `scripts/parse-run.sh` smoke test passes from a clean checkout — Annotate, Compare, Tags modes all load, speaker onboarding works, compute jobs work.
@@ -277,17 +286,17 @@ If the plan is for prod to run headless without Vite, add a `python/server.py` r
 | `docs/SPEAKERS.md` | Move to `docs/research-notes/SPEAKERS.md` (personal thesis inventory, not a project plan). Strip §"Key Paths (WSL)" and any `/mnt/c/...` references. Add a note at the top: "Personal research data inventory — not a project plan." |
 | `docs/desktop_product_architecture.md` | §3 diagram: remove "existing JS modules" line from the renderer box. §16 Stream 3 "Frontend unification path": mark complete, remove Annotate/Compare-divergence language. §17 blockers: strike #2 (Annotate monolithic — no longer true) and #7 (CDN — verify with `rg unpkg src/`) after Stage 3 lands. Add a "Decision log" entry for Stage 3 vanilla-JS removal. |
 | `docs/distribution_readiness_checklist.md` | "Known current blockers" list: strike the items resolved by Stages 2+3 (legacy launcher refs, Annotate monolithic, project save contract if that's done, CDN dependency). Add a new D2 item: "Legacy vanilla-JS entrypoints removed" with a `[x]` once Stage 3 merges. |
-| `docs/plans/parsebuilder-todo.md` | Either delete (if fully subsumed by `parseui-current-state-plan.md`) or rewrite as a minimal "current blocked items" list. Drop C5/C6 gate vocabulary. Drop stale completion dates. |
-| `docs/plans/parseui-current-state-plan.md` | This becomes the canonical React-side plan. Section updates: (1) remove sections now marked done (§1, §3); (2) add an explicit "Remove vanilla JS entrypoints" section with a link to Stage 3's PR; (3) add an "xAI/OpenAI onboarding selector" section referencing Stage 2; (4) drop C5/C6/C7 vocabulary. |
+| `docs/plans/parsebuilder-todo.md` | Either delete (if fully subsumed by `parseui-current-state-plan.md`) or rewrite as a minimal "current blocked items" list. Reconcile C5/C6/C7 language with the then-current `AGENTS.md` policy instead of assuming those gates are retired. Drop stale completion dates. |
+| `docs/plans/parseui-current-state-plan.md` | This becomes the canonical React-side plan. Section updates: (1) remove sections now marked done (§1, §3); (2) add an explicit "Remove vanilla JS entrypoints" section with a link to Stage 3's PR; (3) add an "xAI/OpenAI onboarding selector" section referencing Stage 2; (4) keep or explicitly supersede C5/C6/C7 vocabulary based on the live `AGENTS.md`, rather than deleting it by default. |
 | `docs/plans/react-vite-pivot.md` | Shrink from 47 KB to ≤10 KB: keep only (a) the Python API contract table (authoritative reference), (b) the `js/` → React migration map as historical context (once deleted, it's record-keeping not a plan). Everything else — phase tracker, branch churn, date entries — deleted. |
-| `docs/plans/repo-state-cleanup-and-architecture-unification.md` | Strip to just the Phase 5 slice (vanilla-JS deletion + Python-serves-`dist/` cutover). After Stage 3 merges, mark Phase 5 complete and consider archiving. Phases 0–4 and 6 are already done — note that and remove their step lists. Drop C5/C6 gating language. |
+| `docs/plans/repo-state-cleanup-and-architecture-unification.md` | Strip to just the Phase 5 slice (vanilla-JS deletion + Python-serves-`dist/` cutover). After Stage 3 merges, mark Phase 5 complete and consider archiving. Phases 0–4 and 6 are already done — note that and remove their step lists. Reconcile any C5/C6 wording with the live `AGENTS.md` policy instead of assuming those gates are gone. |
 | `docs/plans/worktree-setup.md` | Trim historical-notes section. Confirm the current agent roster (ParseBuilder / parse-gpt references are stale). Keep the lowercase-clone + branch-from-`origin/main` ops, drop the rest. |
 | `docs/plans/oda/rules.md` | Extract the still-valid rules (Zustand-only, strict TS, no inline styles, no `window.PARSE`, no bare `fetch`) into `AGENTS.md` under a "Frontend rules" heading. Then `git mv` the file to `docs/archive/plans/oda/rules.md` so the entire `oda/` folder is archived. |
 | `docs/plans/MC-312-own-data-vs-filler-investigation.md` | Closed as "no further action needed" — see Stage 5. |
 
 **Risk:** low — docs-only. Main risk is stale cross-links; grep every moved/renamed doc before merging.
 
-**Exit criteria:** each UPDATE doc reflects post-Stage-3 reality, no remaining references to C5/C6/C7 gates, no remaining references to deleted files outside `docs/archive/`.
+**Exit criteria:** each UPDATE doc reflects post-Stage-3 reality, no stale references to deleted files remain outside `docs/archive/`, and any surviving C5/C6/C7 language either matches the live `AGENTS.md` policy or is explicitly superseded by an updated policy document.
 
 ---
 
@@ -316,16 +325,17 @@ If the plan is for prod to run headless without Vite, add a `python/server.py` r
 ## Ordering and dependency graph
 
 ```
-Stage 1 (archive docs) ──┐
-                          ├─→ Stage 4 (refresh UPDATE docs)
-Stage 2 (provider selector) ──┤
-                          │
-Stage 3 (delete vanilla JS) ──┘→ Stage 5 (close MC-312)
+Stage 1 (archived in PR #54) ──┐
+                                ├─→ Stage 4 (refresh UPDATE docs)
+Stage 2 (provider selector) ────┤
+                                │
+Stage 3 (delete vanilla JS; blocked until C5+C6) ──┘→ Stage 5 (close MC-312)
 ```
 
-- Stages 1 and 2 are independent and can run in parallel.
-- Stage 3 depends on Stage 2 (provider selector proven on React UI before deleting legacy HTML).
-- Stage 4 depends on Stages 1–3 (rewrites need the post-deletion reality).
+- Stage 1 is already complete on `main`.
+- Stage 2 can run now only if Lucas explicitly blesses the temporary `src/components/compare/*` exception (or moves that UI slice behind a later gate).
+- Stage 3 depends on Stage 2 **and** explicit C5+C6 clearance because current `AGENTS.md` blocks C7 cleanup/deletion until those manual gates pass.
+- Stage 4 depends on Stages 1–3 (rewrites need the post-deletion reality) and should preserve any still-active gate language unless repo policy changes first.
 - Stage 5 depends on Stage 3 (final grep must be over the post-deletion tree).
 
 **Estimated effort (single-operator):**
