@@ -28,7 +28,7 @@ Verdict legend: **KEEP** · **UPDATE** · **OBSOLETE** · **UNCERTAIN**.
 
 | File | Size | Verdict | Reason |
 |---|---|---|---|
-| [`BUILD_SESSION.md`](BUILD_SESSION.md) | 11 KB | **OBSOLETE** | Wave-based build plan for vanilla-JS modules (`js/annotation-store.js`, `js/annotation-panel.js`, …) and `window.SourceExplorer`→`window.PARSE` namespace migration. All superseded by the React rewrite. |
+| [`BUILD_SESSION.md`](archive/BUILD_SESSION.md) | 11 KB | **OBSOLETE** | Wave-based build plan for vanilla-JS modules (`js/annotation-store.js`, `js/annotation-panel.js`, …) and `window.SourceExplorer`→`window.PARSE` namespace migration. All superseded by the React rewrite. |
 | [`ONBOARDING_PLAN.md`](ONBOARDING_PLAN.md) | 11 KB | **UPDATE** | Import-wizard design for speaker onboarding (WAV + timestamp CSV + IPA CSV + AI matching). Conceptually aligned with goal #3, but assumes Anthropic Claude as default AI and Ollama fallback — needs rewriting to require xAI/OpenAI selection and to match the current `POST /api/onboard/speaker` contract (not the wizard flow it describes). |
 | [`SPEAKERS.md`](SPEAKERS.md) | 7.6 KB | **UPDATE** | Personal thesis data inventory (speaker tiers, WSL `/mnt/c/…` paths, per-speaker transcription CSVs). Useful as a reference for the author's own research data, but the paths are WSL-specific and conflict with `desktop_product_architecture.md`'s portability rules. Move to a research-notes subfolder or strip machine-specific paths. |
 | [`desktop_product_architecture.md`](desktop_product_architecture.md) | 18 KB | **UPDATE** | Canonical living plan for Electron + local Python packaging. Architecture direction still correct and lists xAI/OpenAI/Ollama as optional cloud-AI tier (§9.1). However §3 diagram, §16 "Stream 3 — Frontend unification path", and §17 (blockers #2, #7) all reference `parse.html`/`compare.html`/legacy JS as live surface. Refresh: delete vanilla-JS references, promote `src/` React as the sole frontend, add explicit "remove `js/` + `*.html` legacy pages" as a Phase-0 deliverable. |
@@ -41,26 +41,26 @@ Verdict legend: **KEEP** · **UPDATE** · **OBSOLETE** · **UNCERTAIN**.
 
 | File | Verdict | Reason |
 |---|---|---|
-| [`MC-300-parseui-recovery.md`](plans/MC-300-parseui-recovery.md) | **OBSOLETE** | Self-labeled historical; Priority-1 wiring tasks all landed. |
-| [`MC-301-parseui-actions-import.md`](plans/MC-301-parseui-actions-import.md) | **OBSOLETE** | Self-labeled historical; landed in PR #18. |
-| [`MC-305-branch-cleanup-findings-pr.md`](plans/MC-305-branch-cleanup-findings-pr.md) | **OBSOLETE** | Task-complete; rolling-branch policy it assumes is gone. |
-| [`MC-306-parseui-current-state-plan.md`](plans/MC-306-parseui-current-state-plan.md) | **OBSOLETE** | Replacement doc (`parseui-current-state-plan.md`) already exists. |
+| [`MC-300-parseui-recovery.md`](archive/plans/MC-300-parseui-recovery.md) | **OBSOLETE** | Self-labeled historical; Priority-1 wiring tasks all landed. |
+| [`MC-301-parseui-actions-import.md`](archive/plans/MC-301-parseui-actions-import.md) | **OBSOLETE** | Self-labeled historical; landed in PR #18. |
+| [`MC-305-branch-cleanup-findings-pr.md`](archive/plans/MC-305-branch-cleanup-findings-pr.md) | **OBSOLETE** | Task-complete; rolling-branch policy it assumes is gone. |
+| [`MC-306-parseui-current-state-plan.md`](archive/plans/MC-306-parseui-current-state-plan.md) | **OBSOLETE** | Replacement doc (`parseui-current-state-plan.md`) already exists. |
 | [`MC-312-own-data-vs-filler-investigation.md`](plans/MC-312-own-data-vs-filler-investigation.md) | **KEEP** | Mock/fixture/fallback investigation — directly supports goal #4. Checklist still actionable (though `src/ParseUI.tsx:54` suggests most of the hunt is done — close it out once verified). |
-| [`actions-job-lifecycle-pr.md`](plans/actions-job-lifecycle-pr.md) | **OBSOLETE** | `useActionJob` hook spec; shipped in PR #38. |
-| [`compare-branch-audit.md`](plans/compare-branch-audit.md) | **OBSOLETE** | One-time branch audit; decision acted on. |
+| [`actions-job-lifecycle-pr.md`](archive/plans/actions-job-lifecycle-pr.md) | **OBSOLETE** | `useActionJob` hook spec; shipped in PR #38. |
+| [`compare-branch-audit.md`](archive/plans/compare-branch-audit.md) | **OBSOLETE** | One-time branch audit; decision acted on. |
 | [`contact-lexeme-fetcher.md`](plans/contact-lexeme-fetcher.md) | **KEEP** | Contact-language IPA fetcher using xAI/Grok + Wiktionary/CSV. Python backend + React `ContactLexemePanel`. Aligns with goals #1 and #3; parts still partially implemented. |
 | [`generic-comparison-data-pipeline.md`](plans/generic-comparison-data-pipeline.md) | **KEEP** | Provider-registry design extending the contact-lexeme fetcher (xAI Grokipedia, ASJP, CLDF, Wikidata). Core plumbing on `main`, expansion roadmap still relevant. |
-| [`github-branch-cleanup-findings-2026-04-10.md`](plans/github-branch-cleanup-findings-2026-04-10.md) | **OBSOLETE** | Self-labeled historical; cleanup done. |
+| [`github-branch-cleanup-findings-2026-04-10.md`](archive/plans/github-branch-cleanup-findings-2026-04-10.md) | **OBSOLETE** | Self-labeled historical; cleanup done. |
 | [`legacy-entrypoint-inventory.md`](plans/legacy-entrypoint-inventory.md) | **KEEP** | Canonical list of every remaining `parse.html`/`compare.html`/`js/`/`localhost:8766` reference. Directly supports goal #2. Highly actionable — use as the checklist for the vanilla-JS removal PR. |
 | [`lexibank-setup.md`](plans/lexibank-setup.md) | **KEEP** | Operational setup doc for the Python-side CLDF/CLEF dataset pipeline. No JS surface, no mock data. |
-| [`mc-308-audio-pipeline-fix.md`](plans/mc-308-audio-pipeline-fix.md) | **OBSOLETE** | All criteria marked done; shipped PR #43. |
+| [`mc-308-audio-pipeline-fix.md`](archive/plans/mc-308-audio-pipeline-fix.md) | **OBSOLETE** | All criteria marked done; shipped PR #43. |
 | [`parsebuilder-todo.md`](plans/parsebuilder-todo.md) | **UPDATE** | Active owner TODO, but references retired C5/C6 gate workflow and stale completion dates. Refresh to the new goals (vanilla-JS deletion, xAI/OpenAI onboarding, no mock data). |
 | [`parseui-current-state-plan.md`](plans/parseui-current-state-plan.md) | **UPDATE** | Best candidate for the canonical React-side plan. Aligned with React+Python. §1 and §3 marked done (PR #33, #38). Refresh with explicit sections for "remove vanilla JS entrypoints" and "xAI/OpenAI onboarding selector"; drop C5/C6/C7 vocabulary if that process is retired. |
-| [`parseui-wiring-todo.md`](plans/parseui-wiring-todo.md) | **OBSOLETE** | Self-labeled archive of the vanilla-JS-era wiring TODO; points to the current-state plan. |
-| [`pr38-dispatch-specs.md`](plans/pr38-dispatch-specs.md) | **OBSOLETE** | Implementation brief for landed PR #38. |
-| [`pr38-role-split.md`](plans/pr38-role-split.md) | **OBSOLETE** | Agent-handoff coordination for landed PR #38. |
+| [`parseui-wiring-todo.md`](archive/plans/parseui-wiring-todo.md) | **OBSOLETE** | Self-labeled archive of the vanilla-JS-era wiring TODO; points to the current-state plan. |
+| [`pr38-dispatch-specs.md`](archive/plans/pr38-dispatch-specs.md) | **OBSOLETE** | Implementation brief for landed PR #38. |
+| [`pr38-role-split.md`](archive/plans/pr38-role-split.md) | **OBSOLETE** | Agent-handoff coordination for landed PR #38. |
 | [`react-vite-pivot.md`](plans/react-vite-pivot.md) | **UPDATE** | 47 KB foundational plan for the JS→React pivot. Load-bearing technical content (Python API contract + `js/`→React migration map) is still useful but phase tracker is stale. Trim to: (a) Python API contract as authoritative reference, (b) `js/`→React migration map as the deletion checklist. Drop branch/phase churn. |
-| [`repo-cleanup-preflight.md`](plans/repo-cleanup-preflight.md) | **OBSOLETE** | One-time 2026-04-09 branch snapshot; list now fully pruned. |
+| [`repo-cleanup-preflight.md`](archive/plans/repo-cleanup-preflight.md) | **OBSOLETE** | One-time 2026-04-09 branch snapshot; list now fully pruned. |
 | [`repo-state-cleanup-and-architecture-unification.md`](plans/repo-state-cleanup-and-architecture-unification.md) | **UPDATE** | Phase-5 task 5.1/5.2 is *exactly* the vanilla-JS deletion + Python-serves-`dist/` cutover goal #2 needs. Phases 0–4 and 6 are largely done. Strip to the Phase-5 plan; remove C5/C6 gating language now that the architecture is confirmed. |
 | [`worktree-setup.md`](plans/worktree-setup.md) | **UPDATE** | Multi-agent worktree ops doc. Still useful but references stale branch names and the uppercase archival clone. Trim historical-notes section; confirm the current agent roster. |
 
@@ -72,18 +72,18 @@ Verdict legend: **KEEP** · **UPDATE** · **OBSOLETE** · **UNCERTAIN**.
 
 | File | Verdict | Reason |
 |---|---|---|
-| [`b1-concept-table.md`](plans/oda/b1-concept-table.md) | **OBSOLETE** | `src/components/compare/ConceptTable.tsx` landed. |
-| [`b2-cognate-controls.md`](plans/oda/b2-cognate-controls.md) | **OBSOLETE** | `CognateControls.tsx` landed. |
-| [`b3-borrowing-panel.md`](plans/oda/b3-borrowing-panel.md) | **OBSOLETE** | `BorrowingPanel.tsx` landed. |
-| [`b4-tag-manager.md`](plans/oda/b4-tag-manager.md) | **OBSOLETE** | `TagManager.tsx` landed. |
-| [`b5-enrichments-panel.md`](plans/oda/b5-enrichments-panel.md) | **OBSOLETE** | `EnrichmentsPanel.tsx` landed. |
+| [`b1-concept-table.md`](archive/plans/oda/b1-concept-table.md) | **OBSOLETE** | `src/components/compare/ConceptTable.tsx` landed. |
+| [`b2-cognate-controls.md`](archive/plans/oda/b2-cognate-controls.md) | **OBSOLETE** | `CognateControls.tsx` landed. |
+| [`b3-borrowing-panel.md`](archive/plans/oda/b3-borrowing-panel.md) | **OBSOLETE** | `BorrowingPanel.tsx` landed. |
+| [`b4-tag-manager.md`](archive/plans/oda/b4-tag-manager.md) | **OBSOLETE** | `TagManager.tsx` landed. |
+| [`b5-enrichments-panel.md`](archive/plans/oda/b5-enrichments-panel.md) | **OBSOLETE** | `EnrichmentsPanel.tsx` landed. |
 | [`b6-speaker-import.md`](plans/oda/b6-speaker-import.md) | **UPDATE** | Component exists (`SpeakerImport.tsx`), but the real flow is WAV+CSV upload to `/api/onboard/speaker`, not the JSON state-machine this spec describes. Drift. Either archive or rewrite to reflect the real onboarding contract (and add the xAI/OpenAI provider selector goal #3 requires). |
-| [`b7-export.md`](plans/oda/b7-export.md) | **OBSOLETE** | `useExport.ts` landed; LingPy/NEXUS endpoints wired in `client.ts`. |
-| [`b8-compute-job.md`](plans/oda/b8-compute-job.md) | **OBSOLETE** | `useComputeJob.ts` landed. |
-| [`b9-compare-mode.md`](plans/oda/b9-compare-mode.md) | **OBSOLETE** | `CompareMode.tsx` assembled per checklist. |
-| [`coordination.md`](plans/oda/coordination.md) | **OBSOLETE** | Oda↔ParseBuilder handoff protocol; Track B audit already closed it. |
-| [`oda-core.md`](plans/oda/oda-core.md) | **OBSOLETE** | Self-labels its branch notes as historical; build status records completion. |
-| [`phase-0.md`](plans/oda/phase-0.md) | **OBSOLETE** | Scaffold gate long passed. |
+| [`b7-export.md`](archive/plans/oda/b7-export.md) | **OBSOLETE** | `useExport.ts` landed; LingPy/NEXUS endpoints wired in `client.ts`. |
+| [`b8-compute-job.md`](archive/plans/oda/b8-compute-job.md) | **OBSOLETE** | `useComputeJob.ts` landed. |
+| [`b9-compare-mode.md`](archive/plans/oda/b9-compare-mode.md) | **OBSOLETE** | `CompareMode.tsx` assembled per checklist. |
+| [`coordination.md`](archive/plans/oda/coordination.md) | **OBSOLETE** | Oda↔ParseBuilder handoff protocol; Track B audit already closed it. |
+| [`oda-core.md`](archive/plans/oda/oda-core.md) | **OBSOLETE** | Self-labels its branch notes as historical; build status records completion. |
+| [`phase-0.md`](archive/plans/oda/phase-0.md) | **OBSOLETE** | Scaffold gate long passed. |
 | [`rules.md`](plans/oda/rules.md) | **UPDATE** | Most engineering rules (Zustand, strict TS, no inline styles, no `window.PARSE`) are still sound. They are scoped to "Track B" / Oda and cite historical branch names. Lift the still-valid rules into `AGENTS.md` (or a top-level `CONTRIBUTING.md`) and delete this file. |
 
 **Recommendation for the whole `oda/` folder:** archive wholesale. Move to `docs/plans/archive/oda/` or delete after extracting `rules.md`'s still-valid items into `AGENTS.md`. Update `b6-speaker-import.md` first if it will stay referenced.
@@ -124,13 +124,13 @@ The `docs/` changes live in this branch's follow-up PRs; code changes live in th
 | `vite.config.ts:5–23` | `forceSpaCompareRoute` plugin masks `compare.html` | Delete plugin + import |
 | `start_parse.sh`, `Start Review Tool.bat` | Broken legacy launchers | Delete |
 | `js/compare/compare.js`, `js/concept-table.js` | Self-references inside `js/` | Deleted with the directory |
-| `docs/BUILD_SESSION.md`, `desktop_product_architecture.md`, `distribution_readiness_checklist.md`, `plans/legacy-entrypoint-inventory.md`, `plans/react-vite-pivot.md`, `plans/repo-cleanup-preflight.md`, `plans/repo-state-cleanup-and-architecture-unification.md` | Documentation | Covered by Stages 1 + 4 |
+| `docs/archive/BUILD_SESSION.md`, `desktop_product_architecture.md`, `distribution_readiness_checklist.md`, `plans/legacy-entrypoint-inventory.md`, `plans/react-vite-pivot.md`, `docs/archive/plans/repo-cleanup-preflight.md`, `plans/repo-state-cleanup-and-architecture-unification.md` | Documentation | Stage 1 archived the OBSOLETE ones; Stage 4 refreshes the UPDATE ones |
 
 This list supersedes the stale copy in `plans/legacy-entrypoint-inventory.md`.
 
 ---
 
-### Stage 1 — Archive obsolete docs (docs-only, low risk)
+### Stage 1 — Archive obsolete docs ✅ [PR #54](https://github.com/ArdeleanLucas/PARSE/pull/54) open
 
 **Branch:** `docs/archive-obsolete-2026-04-20`
 **Goal:** Move the 24 OBSOLETE files to `docs/archive/` so the surviving plans are easier to find and trust.
