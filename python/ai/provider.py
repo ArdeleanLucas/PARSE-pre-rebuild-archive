@@ -860,6 +860,27 @@ class AIProvider(abc.ABC):
         raise NotImplementedError
 
 
+_CUDA_ERROR_MARKERS = (
+    "cublas",
+    "cudnn",
+    "cudart",
+    "cuda",
+    "ctranslate2",
+    "gpu",
+    "nvidia",
+)
+
+
+def _env_force_cpu() -> bool:
+    value = os.environ.get("PARSE_STT_FORCE_CPU", "").strip().lower()
+    return value in ("1", "true", "yes", "on")
+
+
+def _looks_like_cuda_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _CUDA_ERROR_MARKERS)
+
+
 class LocalWhisperProvider(AIProvider):
     """Local provider backed by faster-whisper for STT."""
 
@@ -880,6 +901,15 @@ class LocalWhisperProvider(AIProvider):
         self.compute_type = (
             str(compute_type or stt_config.get("compute_type", "int8")).strip() or "int8"
         )
+
+        if _env_force_cpu() and self.device.lower().startswith("cuda"):
+            print(
+                "[WARN] PARSE_STT_FORCE_CPU set; overriding stt.device "
+                "'{0}' → 'cpu' and compute_type → 'int8'.".format(self.device),
+                file=sys.stderr,
+            )
+            self.device = "cpu"
+            self.compute_type = "int8"
 
         self._whisper_model: Optional[Any] = None
         self._model_source: Optional[str] = None
@@ -920,13 +950,17 @@ class LocalWhisperProvider(AIProvider):
             self._effective_device = self.device
             self._effective_compute_type = self.compute_type
         except Exception as exc:
-            if self.device.lower().startswith("cuda"):
+            should_fallback = (
+                self.device.lower().startswith("cuda") or _looks_like_cuda_error(exc)
+            )
+            if should_fallback:
                 print(
                     "[WARN] Failed to load faster-whisper on CUDA ('{0}'): {1}. "
                     "This commonly means cuBLAS/cuDNN DLLs are missing. "
                     "Retrying on CPU/int8.".format(model_source, exc),
                     file=sys.stderr,
                 )
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
                 try:
                     self._whisper_model = WhisperModel(
                         model_source, device="cpu", compute_type="int8"
@@ -996,14 +1030,23 @@ class LocalWhisperProvider(AIProvider):
         try:
             segments_out = _run_transcription(model)
         except Exception as exc:
-            if self._effective_device == "cuda":
+            on_cuda = (
+                self._effective_device is not None
+                and self._effective_device.lower().startswith("cuda")
+            )
+            if on_cuda or _looks_like_cuda_error(exc):
                 print(
                     "[WARN] CUDA inference failed mid-transcription: {0}. "
                     "Rebuilding model on CPU/int8 and retrying.".format(exc),
                     file=sys.stderr,
                 )
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
                 from faster_whisper import WhisperModel as _WM
-                cpu_model = _WM(self._model_source, device="cpu", compute_type="int8")
+                cpu_model = _WM(
+                    self._model_source or self.model_path or "base",
+                    device="cpu",
+                    compute_type="int8",
+                )
                 self._whisper_model = cpu_model
                 self._effective_device = "cpu"
                 self._effective_compute_type = "int8"
