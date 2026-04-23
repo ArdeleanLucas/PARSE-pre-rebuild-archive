@@ -1588,6 +1588,58 @@ export function ParseUI() {
             ))}
           </nav>
 
+          {/* Job status — sits in the blank space between the Borrowings tab and the Annotate/Actions menus */}
+          {activeJobs.length > 0 && (
+            <div className="flex flex-col gap-1" data-testid="topbar-action-statuses">
+              {activeJobs.map((job, i) => (
+                <div key={i} className="flex items-center gap-2 text-[11px]">
+                  {job.state.status === 'running' && (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin text-indigo-500" />
+                      <span className="text-slate-600">{job.state.label}</span>
+                      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
+                        <div
+                          className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                          style={{ width: `${Math.round(job.state.progress * 100)}%` }}
+                        />
+                      </div>
+                      <span className="tabular-nums text-slate-400">{Math.round(job.state.progress * 100)}%</span>
+                      {job.state.etaMs !== null && job.state.etaMs > 0 && (
+                        <span className="tabular-nums text-slate-400" title="Estimated time remaining">
+                          · ~{formatEta(job.state.etaMs)} left
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {job.state.status === 'complete' && (
+                    <>
+                      <Check className="h-3 w-3 text-emerald-500" />
+                      <span className="text-emerald-600">{job.state.label?.replace('…', '')} done</span>
+                    </>
+                  )}
+                  {job.state.status === 'error' && (
+                    <>
+                      <XCircle className="h-3 w-3 text-rose-500" />
+                      <span className="max-w-[200px] truncate text-rose-600">{job.state.error}</span>
+                      <button
+                        onClick={() => { void job.run(); }}
+                        className="text-[10px] text-rose-600 underline hover:text-rose-700"
+                      >
+                        Retry
+                      </button>
+                      <button
+                        onClick={job.reset}
+                        className="text-[10px] text-slate-500 underline hover:text-slate-700"
+                      >
+                        Dismiss
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-center gap-2">
             {/* Mode dropdown */}
             <div className="relative">
@@ -1710,57 +1762,6 @@ export function ParseUI() {
                 </>
               )}
             </div>
-
-            {activeJobs.length > 0 && (
-              <div className="ml-2 flex flex-col gap-1" data-testid="topbar-action-statuses">
-                {activeJobs.map((job, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[11px]">
-                    {job.state.status === 'running' && (
-                      <>
-                        <Loader2 className="h-3 w-3 animate-spin text-indigo-500" />
-                        <span className="text-slate-600">{job.state.label}</span>
-                        <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
-                          <div
-                            className="h-full rounded-full bg-indigo-500 transition-all duration-300"
-                            style={{ width: `${Math.round(job.state.progress * 100)}%` }}
-                          />
-                        </div>
-                        <span className="tabular-nums text-slate-400">{Math.round(job.state.progress * 100)}%</span>
-                        {job.state.etaMs !== null && job.state.etaMs > 0 && (
-                          <span className="tabular-nums text-slate-400" title="Estimated time remaining">
-                            · ~{formatEta(job.state.etaMs)} left
-                          </span>
-                        )}
-                      </>
-                    )}
-                    {job.state.status === 'complete' && (
-                      <>
-                        <Check className="h-3 w-3 text-emerald-500" />
-                        <span className="text-emerald-600">{job.state.label?.replace('…', '')} done</span>
-                      </>
-                    )}
-                    {job.state.status === 'error' && (
-                      <>
-                        <XCircle className="h-3 w-3 text-rose-500" />
-                        <span className="max-w-[200px] truncate text-rose-600">{job.state.error}</span>
-                        <button
-                          onClick={() => { void job.run(); }}
-                          className="text-[10px] text-rose-600 underline hover:text-rose-700"
-                        >
-                          Retry
-                        </button>
-                        <button
-                          onClick={job.reset}
-                          className="text-[10px] text-slate-500 underline hover:text-slate-700"
-                        >
-                          Dismiss
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
 
             <button
               onClick={() => setDarkMode(v => !v)}
