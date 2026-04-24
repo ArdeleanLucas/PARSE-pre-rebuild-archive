@@ -96,8 +96,15 @@ Use the generic tools when an agent needs transport-independent job inspection i
 Recommended agent pattern:
 1. Start a heavy job (`pipeline_run`, `stt_start`, `audio_normalize_start`, etc.)
 2. Poll `job_status` for transport-neutral state
+<<<<<<< HEAD
 3. Read `job_logs` when the human asks "what is it doing?" or when progress stalls
 4. Fall back to old per-type status tools only when a workflow needs type-specific payload shaping
+=======
+3. Inspect `locks` when coordinating speaker-scoped mutating work between humans and agents
+4. Read `job_logs` when the human asks "what is it doing?" or when progress stalls
+5. For HTTP-started jobs that need push completion, pass `callbackUrl` (absolute `http(s)` URL) on the job-start request so PARSE POSTs the final generic job payload on `complete` / `error`
+6. Fall back to old per-type status tools only when a workflow needs type-specific payload shaping
+>>>>>>> 660eb33 (feat: add job completion callbacks)
 
 ## Client/Server Contract Surface
 

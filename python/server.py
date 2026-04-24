@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 
 from ai.chat_orchestrator import ChatOrchestrator, ChatOrchestratorError, READ_ONLY_NOTICE
 from ai.chat_tools import ParseChatTools
@@ -1766,6 +1767,16 @@ def _chat_get_job_logs(job_id: str, offset: int, limit: int) -> Dict[str, Any]:
 
 
 
+def _job_callback_url_from_mapping(payload: Dict[str, Any]) -> Optional[str]:
+    body_obj = payload if isinstance(payload, dict) else {}
+    raw = body_obj.get("callbackUrl", body_obj.get("callback_url"))
+    try:
+        return _normalize_job_callback_url(raw)
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+
+
 def _chat_pipeline_state(speaker: str) -> Dict[str, Any]:
     """Thin wrapper so ParseChatTools can reach the preflight probe."""
     return _pipeline_state_for_speaker(speaker)
@@ -2637,6 +2648,70 @@ def _job_locks_payload(locks: Any) -> Dict[str, Any]:
 
 
 
+def _normalize_job_callback_url(raw_value: Any) -> Optional[str]:
+    value = str(raw_value or "").strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("callbackUrl must be an absolute http(s) URL")
+    return value
+
+
+
+def _job_callback_payload(job: Dict[str, Any]) -> Dict[str, Any]:
+    payload = _job_detail_payload(job, include_logs=False)
+    payload["event"] = "job.{0}".format(str(job.get("status") or "unknown"))
+    return payload
+
+
+
+def _post_job_callback(callback_url: str, payload: Dict[str, Any]) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    request = Request(
+        callback_url,
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": "PARSE-Job-Callback/1.0"},
+        method="POST",
+    )
+    with urlopen(request, timeout=10.0) as response:
+        response.read()
+
+
+
+def _dispatch_job_callback(job_snapshot: Dict[str, Any]) -> None:
+    meta = job_snapshot.get("meta") if isinstance(job_snapshot.get("meta"), dict) else {}
+    callback_url = str(meta.get("callbackUrl") or "").strip()
+    if not callback_url:
+        return
+    try:
+        _post_job_callback(callback_url, _job_callback_payload(job_snapshot))
+    except Exception as exc:
+        job_id = str(job_snapshot.get("jobId") or "")
+        with _jobs_lock:
+            live_job = _jobs.get(job_id)
+            if live_job is not None:
+                _append_job_log_locked(
+                    live_job,
+                    level="error",
+                    event="job.callback_failed",
+                    message="Callback delivery failed: {0}".format(exc),
+                    progress=_clamp_progress(live_job.get("progress", 0.0)),
+                    data={"callbackUrl": callback_url},
+                )
+
+
+
+def _dispatch_job_callback_async(job_snapshot: Dict[str, Any]) -> None:
+    meta = job_snapshot.get("meta") if isinstance(job_snapshot.get("meta"), dict) else {}
+    callback_url = str(meta.get("callbackUrl") or "").strip()
+    if not callback_url:
+        return
+    thread = threading.Thread(target=_dispatch_job_callback, args=(copy.deepcopy(job_snapshot),), daemon=True)
+    thread.start()
+
+
+
 def _create_job(
     job_type: str,
     metadata: Optional[Dict[str, Any]] = None,
@@ -2932,6 +3007,7 @@ def _set_job_complete(
     segments_processed: Optional[int] = None,
     total_segments: Optional[int] = None,
 ) -> None:
+    callback_snapshot: Optional[Dict[str, Any]] = None
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None:
@@ -2968,6 +3044,10 @@ def _set_job_complete(
             message=str(job.get("message") or "Job complete"),
             progress=100.0,
         )
+        callback_snapshot = copy.deepcopy(job)
+
+    if callback_snapshot is not None:
+        _dispatch_job_callback_async(callback_snapshot)
 
 
 
@@ -2980,6 +3060,7 @@ def _set_job_error(
     the short error message so the UI's crash-log modal can render the
     one-line reason on top and the full Python traceback below without
     having to split-on-newline."""
+    callback_snapshot: Optional[Dict[str, Any]] = None
     with _jobs_lock:
         job = _jobs.get(job_id)
         if job is None:
@@ -3004,6 +3085,10 @@ def _set_job_error(
             message=str(error_message),
             progress=_clamp_progress(job.get("progress", 0.0)),
         )
+        callback_snapshot = copy.deepcopy(job)
+
+    if callback_snapshot is not None:
+        _dispatch_job_callback_async(callback_snapshot)
 
 def _get_job_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
     with _jobs_lock:
@@ -6128,6 +6213,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # Resolve source WAV — use explicit path if provided, else look up primary source
         source_wav = str(body.get("sourceWav") or body.get("source_wav") or "").strip()
+        callback_url = _job_callback_url_from_mapping(body)
         if not source_wav:
             source_wav = _annotation_primary_source_wav(speaker)
 
@@ -6143,6 +6229,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                 {
                     "speaker": speaker,
                     "sourceWav": source_wav,
+                    "callbackUrl": callback_url,
                 },
             )
         except JobResourceConflictError as exc:
@@ -6474,6 +6561,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
         language = str(language_raw).strip() if language_raw is not None else None
         if language == "":
             language = None
+        callback_url = _job_callback_url_from_mapping(body)
 
         if not speaker:
             raise ApiError(HTTPStatus.BAD_REQUEST, "speaker is required")
@@ -6487,6 +6575,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                     "speaker": speaker,
                     "sourceWav": source_wav,
                     "language": language,
+                    "callbackUrl": callback_url,
                 },
             )
         except JobResourceConflictError as exc:
@@ -6584,6 +6673,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         raw_session_id = body.get("sessionId", body.get("session_id"))
         session_id = str(raw_session_id).strip() if raw_session_id is not None else ""
+        callback_url = _job_callback_url_from_mapping(body)
 
         try:
             session = _chat_create_or_get_session(session_id if session_id else None)
@@ -6596,6 +6686,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             "chat:run",
             {
                 "sessionId": resolved_session_id,
+                "callbackUrl": callback_url,
             },
         )
 
@@ -6647,11 +6738,13 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         body = self._read_json_body(required=False)
         body_obj = self._expect_object(body or {}, "Request body")
+        callback_url = _job_callback_url_from_mapping(body_obj)
 
         speaker = str(body_obj.get("speaker") or "").strip() or None
         job_metadata = {
             "computeType": normalized_type,
             "payload": body_obj,
+            "callbackUrl": callback_url,
         }
         if speaker:
             job_metadata["speaker"] = speaker

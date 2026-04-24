@@ -108,6 +108,58 @@ def test_speaker_resource_lock_blocks_concurrent_mutating_jobs_and_releases_on_c
     assert second_snapshot["locks"]["resources"] == [{"kind": "speaker", "id": "Fail01"}]
 
 
+def test_job_completion_dispatches_callback_payload(monkeypatch) -> None:
+    server._jobs.clear()
+    delivered = []
+
+    def fake_post(url: str, payload: dict) -> None:
+        delivered.append((url, payload))
+
+    monkeypatch.setattr(server, "_post_job_callback", fake_post)
+    monkeypatch.setattr(server, "_dispatch_job_callback_async", lambda snapshot: server._dispatch_job_callback(snapshot))
+
+    job_id = server._create_job(
+        "stt",
+        {"speaker": "Fail01", "callbackUrl": "https://example.test/hooks/job"},
+    )
+    server._set_job_complete(job_id, {"segments": 12}, message="STT complete")
+
+    assert len(delivered) == 1
+    callback_url, payload = delivered[0]
+    assert callback_url == "https://example.test/hooks/job"
+    assert payload["jobId"] == job_id
+    assert payload["status"] == "complete"
+    assert payload["result"] == {"segments": 12}
+    assert payload["meta"]["speaker"] == "Fail01"
+
+
+
+def test_job_error_dispatches_callback_payload(monkeypatch) -> None:
+    server._jobs.clear()
+    delivered = []
+
+    def fake_post(url: str, payload: dict) -> None:
+        delivered.append((url, payload))
+
+    monkeypatch.setattr(server, "_post_job_callback", fake_post)
+    monkeypatch.setattr(server, "_dispatch_job_callback_async", lambda snapshot: server._dispatch_job_callback(snapshot))
+
+    job_id = server._create_job(
+        "normalize",
+        {"speaker": "Fail02", "callbackUrl": "https://example.test/hooks/job"},
+    )
+    server._set_job_error(job_id, "ffmpeg failed with exit code 1")
+
+    assert len(delivered) == 1
+    callback_url, payload = delivered[0]
+    assert callback_url == "https://example.test/hooks/job"
+    assert payload["jobId"] == job_id
+    assert payload["status"] == "error"
+    assert payload["errorCode"] == "ffmpeg_failed"
+    assert payload["meta"]["speaker"] == "Fail02"
+
+
+
 def test_api_get_jobs_and_job_logs_return_generic_observability_payloads() -> None:
     server._jobs.clear()
 
@@ -184,3 +236,18 @@ def test_api_rejects_conflicting_speaker_mutation_jobs_with_409() -> None:
     assert exc_info.value.status == HTTPStatus.CONFLICT
     assert lock_job in exc_info.value.message
     assert "Fail01" in exc_info.value.message
+
+
+
+def test_api_rejects_invalid_callback_url() -> None:
+    server._jobs.clear()
+    handler = _HandlerHarness(
+        "/api/stt",
+        {"speaker": "Fail01", "sourceWav": "audio/Fail01.wav", "callbackUrl": "ftp://example.test/hook"},
+    )
+
+    with pytest.raises(server.ApiError) as exc_info:
+        handler._api_post_stt_start()
+
+    assert exc_info.value.status == HTTPStatus.BAD_REQUEST
+    assert "callbackUrl" in exc_info.value.message
