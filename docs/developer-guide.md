@@ -390,8 +390,27 @@ A provider change usually touches three layers:
 When extending CLEF:
 
 - keep the provider registry explicit
+- keep the guided config surface aligned with the backend endpoints (`GET/POST /api/clef/config`, `GET /api/clef/catalog`, `GET /api/clef/providers`)
+- remember that fresh workspaces may start without `config/sil_contact_languages.json`; backend init and UI copy should treat that as normal, not as a crash path
+- document any new expectations around `config/sil_catalog_extra.json` if the language picker or catalog merge rules change
 - document new coverage or source assumptions
 - update the provider list in user-facing docs if the provider set changes
+
+## Batch transcription modal semantics
+
+`src/components/shared/TranscriptionRunModal.tsx` now has explicit per-step scope controls when selected speakers already have finalized output.
+
+Current semantics:
+
+- **Keep** (`overwrite=false`) is the default when a step collides with existing output
+- **Overwrite** (`overwrite=true`) must be chosen explicitly per step
+- the collisions bar only appears when the selected speakers actually have finalized output for at least one selected step
+
+When changing this modal:
+
+- keep the user-facing **Keep / Overwrite** wording aligned with the real payload semantics
+- preserve the distinction between no-op keep behavior and destructive overwrite behavior in badges, summary text, and tooltips
+- update `docs/user-guide.md` / `README.md` if the rerun semantics change materially
 
 ## Contributing guidelines
 
