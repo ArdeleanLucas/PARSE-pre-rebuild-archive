@@ -90,6 +90,8 @@ if x_parse["supports_dry_run"]:
 
 Use the new MCP workflow macros when an agent wants a one-call end-to-end action rather than hand-assembling low-level job chains.
 
+Agent example: "Run the full PARSE annotation workflow on speaker `Fail02` and report back on concepts `1`, `2`, and `3`."
+
 ```python
 run_full_annotation_pipeline(
   speaker_id="Fail02",
@@ -108,6 +110,8 @@ export_complete_lingpy_dataset(
   dryRun=False,
 )
 ```
+
+Naming note: `prepare_compare_mode` is the current stable public name. If a future cleanup wants a more action-oriented label, add a backward-compatible alias such as `build_compare_session` rather than silently renaming the macro.
 
 ## Client/Server Contract Surface
 

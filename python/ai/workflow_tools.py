@@ -444,6 +444,109 @@ class WorkflowTools:
     def _is_complete_stage(self, payload: Dict[str, Any]) -> bool:
         return self._terminal_stage_status(payload) == "complete"
 
+    def _stage_progress_percent(self, completed_stages: int, total_stages: int) -> float:
+        if total_stages <= 0:
+            return 0.0
+        return round((float(completed_stages) / float(total_stages)) * 100.0, 1)
+
+    def _workflow_progress_payload(
+        self,
+        *,
+        completed_stages: int,
+        total_stages: int,
+        current_stage: Optional[str],
+        failed_step: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized_completed = max(0, min(int(completed_stages), int(total_stages)))
+        percent = self._stage_progress_percent(normalized_completed, total_stages)
+        done = failed_step is None and normalized_completed >= int(total_stages) and current_stage is None
+        return {
+            "completedStages": normalized_completed,
+            "totalStages": int(total_stages),
+            "percent": 100.0 if done else percent,
+            "currentStage": current_stage,
+            "failedStep": failed_step,
+            "done": done,
+        }
+
+    def _stage_event(
+        self,
+        *,
+        event: str,
+        stage: str,
+        tool: str,
+        completed_stages: int,
+        total_stages: int,
+        status: Optional[str] = None,
+        job_id: Optional[str] = None,
+        message: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload = {
+            "event": event,
+            "stage": stage,
+            "tool": tool,
+            "progressPercent": self._stage_progress_percent(completed_stages, total_stages),
+            "at": _utc_now_iso(),
+        }
+        if status is not None:
+            payload["status"] = status
+        if job_id is not None:
+            payload["jobId"] = job_id
+        if message:
+            payload["message"] = message
+        return payload
+
+    def _workflow_failure_payload(
+        self,
+        *,
+        speaker_id: str,
+        concept_list: Sequence[str],
+        source_wav: Optional[str],
+        stages: Sequence[Dict[str, Any]],
+        events: Sequence[Dict[str, Any]],
+        job_ids: Dict[str, str],
+        completed_stages: int,
+        total_stages: int,
+        failed_step: str,
+        failed_tool: str,
+        failed_payload: Optional[Dict[str, Any]] = None,
+        error_message: Optional[str] = None,
+        error_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        stage_status = self._terminal_stage_status(failed_payload or {})
+        resolved_message = str(
+            error_message
+            or ((failed_payload or {}).get("error") if isinstance(failed_payload, dict) else "")
+            or ((failed_payload or {}).get("message") if isinstance(failed_payload, dict) else "")
+            or "Workflow stage failed"
+        ).strip()
+        resolved_type = str(error_type or "workflow_stage_failure").strip() or "workflow_stage_failure"
+        return {
+            "speaker_id": speaker_id,
+            "concept_list": list(concept_list),
+            "source_wav": source_wav,
+            "job_ids": dict(job_ids),
+            "stages": list(stages),
+            "events": list(events),
+            "progress": self._workflow_progress_payload(
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                current_stage=failed_step,
+                failed_step=failed_step,
+            ),
+            "annotation_summary": None,
+            "final_status": "error",
+            "failedStep": failed_step,
+            "failedTool": failed_tool,
+            "error": {
+                "type": resolved_type,
+                "status": stage_status,
+                "message": resolved_message,
+                "payload": _deepcopy_jsonable(failed_payload) if isinstance(failed_payload, dict) else None,
+            },
+            "completed_at": _utc_now_iso(),
+        }
+
     def _tool_run_full_annotation_pipeline(self, args: Dict[str, Any]) -> Dict[str, Any]:
         speaker_id = self._normalize_speaker_id(args.get("speaker_id"))
         concept_list_raw = args.get("concept_list")
@@ -459,7 +562,41 @@ class WorkflowTools:
         if not concept_list:
             raise ChatToolValidationError("concept_list must contain at least one valid concept ID")
 
-        source_wav = self._resolve_source_wav(speaker_id)
+        total_stages = 3
+        completed_stages = 0
+        events: List[Dict[str, Any]] = []
+        stages: List[Dict[str, Any]] = []
+        job_ids: Dict[str, str] = {}
+
+        try:
+            source_wav = self._resolve_source_wav(speaker_id)
+        except Exception as exc:
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="preflight",
+                    tool="source_audio_resolve",
+                    completed_stages=0,
+                    total_stages=total_stages,
+                    status="error",
+                    message=str(exc),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=None,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=0,
+                total_stages=total_stages,
+                failed_step="preflight",
+                failed_tool="source_audio_resolve",
+                error_message=str(exc),
+                error_type=type(exc).__name__,
+            )
+
         pipeline_state = None
         if self._parse_tools._pipeline_state is not None:
             try:
@@ -480,97 +617,351 @@ class WorkflowTools:
                     {"stage": "forced_align", "tool": "forced_align_start", "status": "planned"},
                     {"stage": "ipa", "tool": "ipa_transcribe_acoustic_start", "status": "planned"},
                 ],
+                "events": [
+                    self._stage_event(event="stage_planned", stage="stt", tool="stt_start", completed_stages=0, total_stages=total_stages, status="planned"),
+                    self._stage_event(event="stage_planned", stage="forced_align", tool="forced_align_start", completed_stages=0, total_stages=total_stages, status="planned"),
+                    self._stage_event(event="stage_planned", stage="ipa", tool="ipa_transcribe_acoustic_start", completed_stages=0, total_stages=total_stages, status="planned"),
+                ],
+                "progress": self._workflow_progress_payload(
+                    completed_stages=0,
+                    total_stages=total_stages,
+                    current_stage="stt",
+                ),
                 "pipeline_state": pipeline_state,
                 "note": "Dry run only. concept_list is used for reporting; the underlying workflow remains speaker-wide.",
             }
 
-        stt_started = self._parse_tools._tool_stt_start({"speaker": speaker_id, "sourceWav": source_wav})
-        stt_job_id = str(stt_started.get("jobId") or "").strip()
-        if not stt_job_id:
-            raise ChatToolExecutionError("STT stage did not return a jobId")
-        stt_status = self._poll_tool_status(
-            self._parse_tools._tool_stt_status,
-            job_id=stt_job_id,
-            include_segments=True,
+        events.append(
+            self._stage_event(
+                event="stage_started",
+                stage="stt",
+                tool="stt_start",
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                status="running",
+            )
         )
-        stages: List[Dict[str, Any]] = [
-            {"stage": "stt", "tool": "stt_start", "status": self._terminal_stage_status(stt_status), "payload": stt_status}
-        ]
-        if not self._is_complete_stage(stt_status):
-            return {
-                "speaker_id": speaker_id,
-                "concept_list": concept_list,
-                "source_wav": source_wav,
-                "job_ids": {"stt": stt_job_id},
-                "stages": stages,
-                "annotation_summary": None,
-                "final_status": self._terminal_stage_status(stt_status),
-                "completed_at": _utc_now_iso(),
-            }
+        try:
+            stt_started = self._parse_tools._tool_stt_start({"speaker": speaker_id, "sourceWav": source_wav})
+            stt_job_id = str(stt_started.get("jobId") or "").strip()
+            if not stt_job_id:
+                raise ChatToolExecutionError("STT stage did not return a jobId")
+            job_ids["stt"] = stt_job_id
+            stt_status = self._poll_tool_status(
+                self._parse_tools._tool_stt_status,
+                job_id=stt_job_id,
+                include_segments=True,
+            )
+        except Exception as exc:
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="stt",
+                    tool="stt_start",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status="error",
+                    job_id=job_ids.get("stt"),
+                    message=str(exc),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="stt",
+                failed_tool="stt_start",
+                error_message=str(exc),
+                error_type=type(exc).__name__,
+            )
 
-        align_started = self._parse_tools._tool_forced_align_start({"speaker": speaker_id})
-        align_job_id = str(align_started.get("jobId") or "").strip()
-        if not align_job_id:
-            raise ChatToolExecutionError("forced_align stage did not return a jobId")
-        align_status = self._poll_tool_status(
-            self._parse_tools._tool_forced_align_status,
-            job_id=align_job_id,
+        stt_stage_status = self._terminal_stage_status(stt_status)
+        stages.append({"stage": "stt", "tool": "stt_start", "status": stt_stage_status, "payload": stt_status})
+        if not self._is_complete_stage(stt_status):
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="stt",
+                    tool="stt_status",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status=stt_stage_status,
+                    job_id=job_ids.get("stt"),
+                    message=str(stt_status.get("error") or stt_status.get("message") or stt_stage_status),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="stt",
+                failed_tool="stt_status",
+                failed_payload=stt_status,
+                error_type="workflow_stage_status",
+            )
+        completed_stages += 1
+        events.append(
+            self._stage_event(
+                event="stage_completed",
+                stage="stt",
+                tool="stt_status",
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                status=stt_stage_status,
+                job_id=job_ids.get("stt"),
+            )
         )
+
+        events.append(
+            self._stage_event(
+                event="stage_started",
+                stage="forced_align",
+                tool="forced_align_start",
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                status="running",
+            )
+        )
+        try:
+            align_started = self._parse_tools._tool_forced_align_start({"speaker": speaker_id})
+            align_job_id = str(align_started.get("jobId") or "").strip()
+            if not align_job_id:
+                raise ChatToolExecutionError("forced_align stage did not return a jobId")
+            job_ids["forced_align"] = align_job_id
+            align_status = self._poll_tool_status(
+                self._parse_tools._tool_forced_align_status,
+                job_id=align_job_id,
+            )
+        except Exception as exc:
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="forced_align",
+                    tool="forced_align_start",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status="error",
+                    job_id=job_ids.get("forced_align"),
+                    message=str(exc),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="forced_align",
+                failed_tool="forced_align_start",
+                error_message=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+        align_stage_status = self._terminal_stage_status(align_status)
         stages.append({
             "stage": "forced_align",
             "tool": "forced_align_start",
-            "status": self._terminal_stage_status(align_status),
+            "status": align_stage_status,
             "payload": align_status,
         })
         if not self._is_complete_stage(align_status):
-            return {
-                "speaker_id": speaker_id,
-                "concept_list": concept_list,
-                "source_wav": source_wav,
-                "job_ids": {"stt": stt_job_id, "forced_align": align_job_id},
-                "stages": stages,
-                "annotation_summary": None,
-                "final_status": self._terminal_stage_status(align_status),
-                "completed_at": _utc_now_iso(),
-            }
-
-        ipa_started = self._parse_tools._tool_ipa_transcribe_acoustic_start({"speaker": speaker_id})
-        ipa_job_id = str(ipa_started.get("jobId") or "").strip()
-        if not ipa_job_id:
-            raise ChatToolExecutionError("ipa stage did not return a jobId")
-        ipa_status = self._poll_tool_status(
-            self._parse_tools._tool_ipa_transcribe_acoustic_status,
-            job_id=ipa_job_id,
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="forced_align",
+                    tool="forced_align_status",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status=align_stage_status,
+                    job_id=job_ids.get("forced_align"),
+                    message=str(align_status.get("error") or align_status.get("message") or align_stage_status),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="forced_align",
+                failed_tool="forced_align_status",
+                failed_payload=align_status,
+                error_type="workflow_stage_status",
+            )
+        completed_stages += 1
+        events.append(
+            self._stage_event(
+                event="stage_completed",
+                stage="forced_align",
+                tool="forced_align_status",
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                status=align_stage_status,
+                job_id=job_ids.get("forced_align"),
+            )
         )
+
+        events.append(
+            self._stage_event(
+                event="stage_started",
+                stage="ipa",
+                tool="ipa_transcribe_acoustic_start",
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                status="running",
+            )
+        )
+        try:
+            ipa_started = self._parse_tools._tool_ipa_transcribe_acoustic_start({"speaker": speaker_id})
+            ipa_job_id = str(ipa_started.get("jobId") or "").strip()
+            if not ipa_job_id:
+                raise ChatToolExecutionError("ipa stage did not return a jobId")
+            job_ids["ipa"] = ipa_job_id
+            ipa_status = self._poll_tool_status(
+                self._parse_tools._tool_ipa_transcribe_acoustic_status,
+                job_id=ipa_job_id,
+            )
+        except Exception as exc:
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="ipa",
+                    tool="ipa_transcribe_acoustic_start",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status="error",
+                    job_id=job_ids.get("ipa"),
+                    message=str(exc),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="ipa",
+                failed_tool="ipa_transcribe_acoustic_start",
+                error_message=str(exc),
+                error_type=type(exc).__name__,
+            )
+
+        ipa_stage_status = self._terminal_stage_status(ipa_status)
         stages.append({
             "stage": "ipa",
             "tool": "ipa_transcribe_acoustic_start",
-            "status": self._terminal_stage_status(ipa_status),
+            "status": ipa_stage_status,
             "payload": ipa_status,
         })
-
-        annotation_summary = self._parse_tools._tool_annotation_read(
-            {
-                "speaker": speaker_id,
-                "conceptIds": concept_list,
-                "includeTiers": ["ipa", "ortho", "concept", "speaker"],
-                "maxIntervals": 5000,
-            }
+        if not self._is_complete_stage(ipa_status):
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="ipa",
+                    tool="ipa_transcribe_acoustic_status",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status=ipa_stage_status,
+                    job_id=job_ids.get("ipa"),
+                    message=str(ipa_status.get("error") or ipa_status.get("message") or ipa_stage_status),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="ipa",
+                failed_tool="ipa_transcribe_acoustic_status",
+                failed_payload=ipa_status,
+                error_type="workflow_stage_status",
+            )
+        completed_stages += 1
+        events.append(
+            self._stage_event(
+                event="stage_completed",
+                stage="ipa",
+                tool="ipa_transcribe_acoustic_status",
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                status=ipa_stage_status,
+                job_id=job_ids.get("ipa"),
+            )
         )
-        final_status = "complete" if self._is_complete_stage(ipa_status) else self._terminal_stage_status(ipa_status)
+
+        try:
+            annotation_summary = self._parse_tools._tool_annotation_read(
+                {
+                    "speaker": speaker_id,
+                    "conceptIds": concept_list,
+                    "includeTiers": ["ipa", "ortho", "concept", "speaker"],
+                    "maxIntervals": 5000,
+                }
+            )
+        except Exception as exc:
+            events.append(
+                self._stage_event(
+                    event="stage_failed",
+                    stage="postflight",
+                    tool="annotation_read",
+                    completed_stages=completed_stages,
+                    total_stages=total_stages,
+                    status="error",
+                    message=str(exc),
+                )
+            )
+            return self._workflow_failure_payload(
+                speaker_id=speaker_id,
+                concept_list=concept_list,
+                source_wav=source_wav,
+                stages=stages,
+                events=events,
+                job_ids=job_ids,
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                failed_step="postflight",
+                failed_tool="annotation_read",
+                error_message=str(exc),
+                error_type=type(exc).__name__,
+            )
 
         return {
             "speaker_id": speaker_id,
             "concept_list": concept_list,
             "source_wav": source_wav,
-            "job_ids": {
-                "stt": stt_job_id,
-                "forced_align": align_job_id,
-                "ipa": ipa_job_id,
-            },
+            "job_ids": dict(job_ids),
             "stages": stages,
+            "events": events,
+            "progress": self._workflow_progress_payload(
+                completed_stages=completed_stages,
+                total_stages=total_stages,
+                current_stage=None,
+            ),
             "annotation_summary": annotation_summary,
-            "final_status": final_status,
+            "final_status": "complete",
             "completed_at": _utc_now_iso(),
         }
 

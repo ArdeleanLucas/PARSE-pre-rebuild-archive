@@ -134,11 +134,54 @@ def test_run_full_annotation_pipeline_orchestrates_low_level_jobs(tmp_path: path
         "forced_align": "job-align",
         "ipa": "job-ipa",
     }
+    assert payload["progress"]["completedStages"] == 3
+    assert payload["progress"]["totalStages"] == 3
+    assert payload["progress"]["percent"] == 100.0
+    assert payload["progress"]["done"] is True
+    assert [event["event"] for event in payload["events"]] == [
+        "stage_started",
+        "stage_completed",
+        "stage_started",
+        "stage_completed",
+        "stage_started",
+        "stage_completed",
+    ]
     assert stt_calls == [("Fail02", "audio/original/Fail02.wav", None)]
     assert start_calls == [
         ("forced_align", {"speaker": "Fail02", "overwrite": False, "language": "ku", "padMs": 100, "emitPhonemes": True}),
         ("ipa_only", {"speaker": "Fail02", "overwrite": False}),
     ]
+
+
+def test_run_full_annotation_pipeline_returns_structured_failure_payload(tmp_path: pathlib.Path) -> None:
+    _seed_annotation(tmp_path, "Fail02")
+
+    workflow = WorkflowTools(
+        project_root=tmp_path,
+        start_stt_job=lambda *_args: "job-stt",
+        start_compute_job=lambda *_args, **_kwargs: "unused",
+        get_job_snapshot=lambda job_id: {
+            "type": "stt",
+            "status": "error",
+            "progress": 42.0,
+            "error": "decoder crash",
+            "result": {"speaker": "Fail02", "sourceWav": "audio/original/Fail02.wav"},
+        } if job_id == "job-stt" else None,
+    )
+
+    payload = workflow.execute(
+        "run_full_annotation_pipeline",
+        {"speaker_id": "Fail02", "concept_list": ["1"]},
+    )["result"]
+
+    assert payload["final_status"] == "error"
+    assert payload["failedStep"] == "stt"
+    assert payload["failedTool"] == "stt_status"
+    assert payload["error"]["message"] == "decoder crash"
+    assert payload["progress"]["completedStages"] == 0
+    assert payload["progress"]["currentStage"] == "stt"
+    assert payload["progress"]["done"] is False
+    assert payload["events"][-1]["event"] == "stage_failed"
 
 
 def test_prepare_compare_mode_builds_compare_bundle_from_selected_range(tmp_path: pathlib.Path) -> None:
