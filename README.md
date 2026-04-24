@@ -70,9 +70,9 @@ It provides:
 - A **concept × speaker matrix** for side-by-side lexical comparison
 - Cognate controls for **accept**, **split**, **merge**, and **cycle**
 - Per-row editing, speaker flags, and secondary actions for review work
-- **Borrowing adjudication** aided by contact-language similarity evidence
+- **Borrowing adjudication** aided by contact-language similarity evidence, dynamic primary-language similarity columns, and selectable reference forms
 - **Enrichment overlays** for computed comparative metadata
-- The **CLEF** panel for multi-source contact-language lookup
+- The **CLEF** panel for multi-source contact-language lookup, provenance-aware **Sources Report**, and retryable populate workflows
 - The same shared **tag system** used in Annotate mode
 - Export to **LingPy-compatible TSV** and **NEXUS** for downstream phylogenetic analysis
 

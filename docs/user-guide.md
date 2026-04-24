@@ -239,6 +239,17 @@ It is implemented as a provider-registry workflow under `python/compare/provider
 
 When a lexical item might reflect contact influence rather than straightforward inheritance, CLEF can fetch comparison data from multiple external and local sources, then surface that evidence during Compare-mode review.
 
+Populate jobs now follow the same global-job pattern as other heavy PARSE workflows:
+
+- **Save & populate** closes the modal and moves progress into the shared header status chip
+- a successful populate can trigger an automatic recompute so similarity columns refresh against the newly available reference data
+- empty-populate outcomes surface an explicit banner rather than silently looking like success
+- that banner includes **Retry with different providers** so you can reopen the modal directly on the auto-populate tab
+
+The Compare table and detail views also follow the configured CLEF primaries dynamically: similarity columns are no longer hard-coded to Arabic/Persian, and the **Reference Forms** panel can render multiple forms per language.
+
+Each reference form row has a checkbox. Those selections persist to `sil_contact_languages.json._meta.form_selections`, and only the selected forms contribute to the similarity score.
+
 On a fresh workspace, the first run of **Borrowing detection (CLEF)** now opens a guided **Configure CLEF** modal instead of failing on a missing config file. The modal lets you:
 
 - pick 1–2 primary contact languages
@@ -266,9 +277,17 @@ The saved config lives at `config/sil_contact_languages.json`; optional extra ca
 ### Current CLEF endpoints
 
 - `GET /api/clef/config` — read the current CLEF language configuration
+- `GET /api/clef/sources-report` — read corpus-wide provider provenance for populated reference forms
 - `POST /api/clef/config` — save the CLEF language configuration
+- `POST /api/clef/form-selections` — persist which reference forms should count toward similarity scoring
 - `POST /api/compute/contact-lexemes` — start a contact-lexeme fetch job
 - `GET /api/contact-lexemes/coverage` — inspect current provider coverage
+
+### Sources Report and provenance
+
+The **Sources Report** modal summarizes which providers contributed the currently populated reference forms.
+
+This matters for academic use because CLEF no longer treats the populated form list as an opaque blob. New entries can carry per-form provenance such as `wikidata`, `wiktionary`, `asjp`, or other provider sources, while older bare-string entries remain readable as legacy `unknown` provenance until you explicitly repopulate them.
 
 ## AI Workflow Assistant in daily use
 

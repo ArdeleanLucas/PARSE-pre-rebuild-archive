@@ -391,10 +391,18 @@ When extending CLEF:
 
 - keep the provider registry explicit
 - keep the guided config surface aligned with the backend endpoints (`GET/POST /api/clef/config`, `GET /api/clef/catalog`, `GET /api/clef/providers`)
+- keep the provenance / selection endpoints aligned with the UI surfaces (`GET /api/clef/sources-report`, `POST /api/clef/form-selections`)
 - remember that fresh workspaces may start without `config/sil_contact_languages.json`; backend init and UI copy should treat that as normal, not as a crash path
 - document any new expectations around `config/sil_catalog_extra.json` if the language picker or catalog merge rules change
 - document new coverage or source assumptions
 - update the provider list in user-facing docs if the provider set changes
+
+The current CLEF UI also assumes:
+
+- similarity columns are derived dynamically from `primary_contact_languages`, not hard-coded language slots
+- the Reference Forms panel may show multiple forms per language
+- per-form provenance may be available and should stay visible through the Sources Report modal
+- form-selection state persists in `sil_contact_languages.json._meta.form_selections` and affects downstream similarity scoring
 
 ## Batch transcription modal semantics
 

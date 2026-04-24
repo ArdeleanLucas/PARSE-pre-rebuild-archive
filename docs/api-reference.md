@@ -92,6 +92,7 @@ WebSocket streaming is additive. Clients can continue polling `/api/stt/status`,
 | `GET /api/clef/config` | Read CLEF language configuration | Returns primary contact languages plus saved catalog entries |
 | `GET /api/clef/catalog` | Read bundled CLEF language catalog | Includes the SIL/ISO-backed picker data for the Configure CLEF modal |
 | `GET /api/clef/providers` | Read available CLEF providers | Returns provider keys, labels, and capability metadata for auto-populate setup |
+| `GET /api/clef/sources-report` | Read CLEF provenance summary | Returns provider-attribution breakdowns and per-form source data for the Sources Report modal |
 | `GET /api/jobs` | List recent backend jobs | Supports status / type / speaker filters and returns generic job snapshots |
 | `GET /api/jobs/active` | List active backend jobs | Used to rehydrate progress after reload |
 | `GET /api/jobs/{jobId}` | Read one backend job | Includes generic status, progress, `errorCode`, `logCount`, and lock metadata |
@@ -163,6 +164,7 @@ WebSocket streaming is additive. Clients can continue polling `/api/stt/status`,
 | `POST /api/enrichments` | Save enrichments | Accepts either `{ enrichments: ... }` or the raw object |
 | `POST /api/config` | Update project configuration | Current server accepts POST as an update path |
 | `POST /api/clef/config` | Save CLEF language configuration | Used by the guided Configure CLEF modal before optional auto-populate |
+| `POST /api/clef/form-selections` | Save CLEF form selections | Persists which populated reference forms should contribute to similarity scoring |
 | `POST /api/tags/merge` | Merge tag definitions | Shared tag persistence |
 | `POST /api/offset/detect` | Detect a constant timestamp offset | Starts an async compute job with progress updates and crash-log capture |
 | `POST /api/offset/detect-from-pair` | Detect a timestamp offset from trusted manual pairs | STT-free async correction path |
