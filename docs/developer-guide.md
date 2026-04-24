@@ -300,7 +300,11 @@ When adding or renaming MCP-visible tools, update all three layers together:
 
 ### Publishing `parse-mcp` to PyPI
 
-When the package metadata or release contents change, validate and publish from the repo root:
+When the package metadata or release contents change, validate and publish from the repo root.
+
+1. Validate locally and build the release artifacts.
+2. Test on TestPyPI first so you can confirm installability before the real release.
+3. Publish the same version to PyPI only after the TestPyPI smoke check looks correct.
 
 ```bash
 python3 -m pip install build twine
@@ -308,6 +312,7 @@ python3 -m pytest python/packages/parse_mcp/tests -q
 python3 -m build python/packages/parse_mcp
 python3 -m twine check python/packages/parse_mcp/dist/*
 python3 -m twine upload --repository testpypi python/packages/parse_mcp/dist/*
+python3 -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ parse-mcp
 python3 -m twine upload python/packages/parse_mcp/dist/*
 ```
 

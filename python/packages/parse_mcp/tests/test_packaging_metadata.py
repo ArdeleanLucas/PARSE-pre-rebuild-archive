@@ -6,6 +6,7 @@ import tomllib
 
 PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = PACKAGE_ROOT / "pyproject.toml"
+DEVELOPER_GUIDE_PATH = PACKAGE_ROOT.parents[2] / "docs" / "developer-guide.md"
 
 
 def load_pyproject() -> dict:
@@ -30,6 +31,26 @@ def test_release_metadata_is_pypi_ready() -> None:
         "Issues": "https://github.com/ArdeleanLucas/PARSE/issues",
         "Documentation": "https://github.com/ArdeleanLucas/PARSE/tree/main/docs",
     }
+
+
+def test_package_metadata_supports_pypi_discoverability() -> None:
+    project = load_pyproject()["project"]
+    classifiers = set(project["classifiers"])
+    keywords = set(project["keywords"])
+
+    assert {
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+    }.issubset(classifiers)
+    assert {"mcp", "langchain", "llama-index", "crewai", "linguistics"}.issubset(keywords)
+
+
+def test_release_docs_require_testpypi_first() -> None:
+    guide = DEVELOPER_GUIDE_PATH.read_text(encoding="utf-8")
+
+    assert "Test on TestPyPI first" in guide
+    assert "twine upload --repository testpypi" in guide
 
 
 def test_core_dependencies_stay_minimal() -> None:

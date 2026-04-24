@@ -16,7 +16,7 @@ authors = [
 dependencies = [
   "pydantic>=2.7,<3",
 ]
-keywords = ["mcp", "linguistics", "fieldwork", "phonetics", "langchain", "llamaindex", "crewai"]
+keywords = ["mcp", "linguistics", "fieldwork", "phonetics", "langchain", "llama-index", "llamaindex", "crewai"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
