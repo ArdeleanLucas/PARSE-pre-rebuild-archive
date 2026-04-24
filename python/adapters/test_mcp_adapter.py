@@ -108,6 +108,14 @@ def test_parse_chat_tools_get_all_tool_names_matches_instance(tmp_path) -> None:
     assert ParseChatTools.get_all_tool_names() == instance_names
 
 
+
+def test_job_observability_tools_are_allowlisted(tmp_path) -> None:
+    tools = ParseChatTools(project_root=tmp_path)
+
+    for tool_name in ["jobs_list", "job_status", "job_logs"]:
+        assert tool_name in tools.tool_names()
+
+
 @pytest.mark.skipif(not _has_mcp(), reason="mcp package not installed")
 def test_create_mcp_server_defaults_to_33_tools_without_config(tmp_path, monkeypatch) -> None:
     import asyncio
@@ -132,8 +140,7 @@ def test_create_mcp_server_defaults_to_33_tools_without_config(tmp_path, monkeyp
     assert payload["result"]["exposeAllTools"] is False
     assert payload["result"]["configSource"] is None
     assert payload["result"]["mcpToolCount"] == 33
-    assert payload["result"]["parseChatToolCount"] == 47
-    assert payload["result"]["workflowToolCount"] == 3
+    assert payload["result"]["parseChatToolCount"] == 50
 
 
 @pytest.mark.skipif(not _has_mcp(), reason="mcp package not installed")
@@ -160,8 +167,7 @@ def test_create_mcp_server_exposes_all_51_tools_when_enabled_in_config_dir(tmp_p
     assert payload["ok"] is True
     assert payload["result"]["exposeAllTools"] is True
     assert payload["result"]["mcpToolCount"] == 51
-    assert payload["result"]["parseChatToolCount"] == 47
-    assert payload["result"]["workflowToolCount"] == 3
+    assert payload["result"]["parseChatToolCount"] == 50
 
 
 @pytest.mark.skipif(not _has_mcp(), reason="mcp package not installed")

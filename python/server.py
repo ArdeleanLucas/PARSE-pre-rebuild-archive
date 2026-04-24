@@ -36,6 +36,7 @@ except Exception:
 HOST = "0.0.0.0"
 PORT = 8766
 JOB_RETENTION_SECONDS = 60 * 60
+JOB_LOG_MAX_ENTRIES = 200
 CONFIG_SCHEMA_VERSION = 1
 
 CORS_HEADERS = {
@@ -1710,6 +1711,27 @@ def _chat_get_job_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
     return _get_job_snapshot(job_id)
 
 
+
+def _chat_list_jobs(filters: Dict[str, Any]) -> Dict[str, Any]:
+    filters_obj = dict(filters or {})
+    rows = _list_jobs_snapshots(
+        statuses=filters_obj.get("statuses") or [],
+        job_types=filters_obj.get("types") or [],
+        speaker=filters_obj.get("speaker"),
+        limit=int(filters_obj.get("limit") or 100),
+    )
+    return {"jobs": rows, "count": len(rows)}
+
+
+
+def _chat_get_job_logs(job_id: str, offset: int, limit: int) -> Dict[str, Any]:
+    job = _get_job_snapshot(job_id)
+    if job is None:
+        return {"jobId": job_id, "count": 0, "offset": offset, "limit": limit, "logs": []}
+    return _job_logs_payload(job, offset=offset, limit=limit)
+
+
+
 def _chat_pipeline_state(speaker: str) -> Dict[str, Any]:
     """Thin wrapper so ParseChatTools can reach the preflight probe."""
     return _pipeline_state_for_speaker(speaker)
@@ -2270,6 +2292,8 @@ def _get_chat_runtime() -> Tuple[ParseChatTools, ChatOrchestrator]:
                 docs_root=_chat_docs_root(),
                 start_stt_job=_chat_start_stt_job,
                 get_job_snapshot=_chat_get_job_snapshot,
+                list_jobs=_chat_list_jobs,
+                get_job_logs=_chat_get_job_logs,
                 external_read_roots=_chat_external_read_roots(),
                 memory_path=_chat_memory_path(),
                 onboard_speaker=_chat_onboard_speaker,
@@ -2364,14 +2388,68 @@ def _cleanup_old_jobs() -> None:
             _jobs.pop(job_id, None)
 
 
+def _job_log_entry(
+    *,
+    level: str,
+    event: str,
+    message: str,
+    source: str = "job_registry",
+    progress: Optional[float] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    entry: Dict[str, Any] = {
+        "ts": _utc_now_iso(),
+        "level": str(level or "info"),
+        "event": str(event or "job.event"),
+        "message": str(message or ""),
+        "source": str(source or "job_registry"),
+    }
+    if progress is not None:
+        entry["progress"] = _clamp_progress(progress)
+    if isinstance(data, dict) and data:
+        entry["data"] = copy.deepcopy(data)
+    return entry
+
+
+
+def _append_job_log_locked(
+    job: Dict[str, Any],
+    *,
+    level: str,
+    event: str,
+    message: str,
+    source: str = "job_registry",
+    progress: Optional[float] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> None:
+    logs = job.get("logs")
+    if not isinstance(logs, list):
+        logs = []
+        job["logs"] = logs
+    logs.append(
+        _job_log_entry(
+            level=level,
+            event=event,
+            message=message,
+            source=source,
+            progress=progress,
+            data=data,
+        )
+    )
+    if len(logs) > JOB_LOG_MAX_ENTRIES:
+        del logs[:-JOB_LOG_MAX_ENTRIES]
+
+
+
 def _create_job(job_type: str, metadata: Optional[Dict[str, Any]] = None) -> str:
     _cleanup_old_jobs()
 
     job_id = str(uuid.uuid4())
     now_ts = time.time()
+    now_iso = _utc_now_iso()
 
     with _jobs_lock:
-        _jobs[job_id] = {
+        job: Dict[str, Any] = {
             "jobId": job_id,
             "type": str(job_type),
             "status": "running",
@@ -2381,14 +2459,28 @@ def _create_job(job_type: str, metadata: Optional[Dict[str, Any]] = None) -> str
             "message": None,
             "segmentsProcessed": 0,
             "totalSegments": 0,
-            "created_at": _utc_now_iso(),
-            "updated_at": _utc_now_iso(),
+            "created_at": now_iso,
+            "updated_at": now_iso,
             "completed_at": None,
             "created_ts": now_ts,
             "updated_ts": now_ts,
             "completed_ts": None,
             "meta": copy.deepcopy(metadata or {}),
+            "logs": [],
         }
+        _append_job_log_locked(
+            job,
+            level="info",
+            event="job.created",
+            message="Job created",
+            progress=0.0,
+            data={
+                "jobId": job_id,
+                "type": str(job_type),
+                "meta": copy.deepcopy(metadata or {}),
+            },
+        )
+        _jobs[job_id] = job
 
     return job_id
 
@@ -2506,7 +2598,6 @@ def _compute_checkpoint(label: str, **kv: Any) -> None:
         # If the log file is unreachable the compute continues.
         pass
 
-
 def _set_job_progress(
     job_id: str,
     progress: float,
@@ -2520,7 +2611,10 @@ def _set_job_progress(
             return
 
         now_ts = time.time()
-        job["progress"] = _clamp_progress(progress)
+        previous_message = str(job.get("message") or "")
+        previous_progress = _clamp_progress(job.get("progress", 0.0))
+        current_progress = _clamp_progress(progress)
+        job["progress"] = current_progress
         job["updated_at"] = _utc_now_iso()
         job["updated_ts"] = now_ts
 
@@ -2536,6 +2630,29 @@ def _set_job_progress(
                 job["totalSegments"] = max(0, int(total_segments))
             except (TypeError, ValueError):
                 job["totalSegments"] = 0
+
+        current_message = str(job.get("message") or "")
+        if current_message and current_message != previous_message:
+            _append_job_log_locked(
+                job,
+                level="info",
+                event="job.progress",
+                message=current_message,
+                progress=current_progress,
+                data={
+                    "segmentsProcessed": int(job.get("segmentsProcessed", 0) or 0),
+                    "totalSegments": int(job.get("totalSegments", 0) or 0),
+                },
+            )
+        elif current_progress != previous_progress and abs(current_progress - previous_progress) >= 25.0:
+            _append_job_log_locked(
+                job,
+                level="info",
+                event="job.progress",
+                message="Progress updated",
+                progress=current_progress,
+            )
+
 
 
 def _set_job_complete(
@@ -2571,6 +2688,14 @@ def _set_job_complete(
                 job["totalSegments"] = max(0, int(total_segments))
             except (TypeError, ValueError):
                 pass
+        _append_job_log_locked(
+            job,
+            level="info",
+            event="job.completed",
+            message=str(job.get("message") or "Job complete"),
+            progress=100.0,
+        )
+
 
 
 def _set_job_error(
@@ -2596,7 +2721,13 @@ def _set_job_error(
         job["updated_ts"] = now_ts
         job["completed_at"] = _utc_now_iso()
         job["completed_ts"] = now_ts
-
+        _append_job_log_locked(
+            job,
+            level="error",
+            event="job.failed",
+            message=str(error_message),
+            progress=_clamp_progress(job.get("progress", 0.0)),
+        )
 
 def _get_job_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
     with _jobs_lock:
@@ -2604,6 +2735,80 @@ def _get_job_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
         if job is None:
             return None
         return copy.deepcopy(job)
+
+
+
+def _job_logs_payload(job: Dict[str, Any], *, offset: int = 0, limit: int = JOB_LOG_MAX_ENTRIES) -> Dict[str, Any]:
+    logs = job.get("logs") if isinstance(job.get("logs"), list) else []
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = max(1, min(int(limit or JOB_LOG_MAX_ENTRIES), JOB_LOG_MAX_ENTRIES))
+    sliced = copy.deepcopy(logs[safe_offset:safe_offset + safe_limit])
+    return {
+        "jobId": str(job.get("jobId") or ""),
+        "count": len(logs),
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "logs": sliced,
+    }
+
+
+
+def _job_detail_payload(job: Dict[str, Any], *, include_logs: bool = False) -> Dict[str, Any]:
+    payload = _job_response_payload(job)
+    payload["createdAt"] = job.get("created_at")
+    payload["updatedAt"] = job.get("updated_at")
+    payload["completedAt"] = job.get("completed_at")
+    payload["meta"] = copy.deepcopy(job.get("meta") if isinstance(job.get("meta"), dict) else {})
+    logs = job.get("logs") if isinstance(job.get("logs"), list) else []
+    payload["logCount"] = len(logs)
+    if include_logs:
+        payload["logs"] = copy.deepcopy(logs)
+    return payload
+
+
+
+def _list_jobs_snapshots(
+    *,
+    statuses: Optional[Sequence[str]] = None,
+    job_types: Optional[Sequence[str]] = None,
+    speaker: Optional[str] = None,
+    limit: int = 100,
+) -> List[Dict[str, Any]]:
+    normalized_statuses = {
+        str(value or "").strip().lower()
+        for value in (statuses or [])
+        if str(value or "").strip()
+    }
+    normalized_types = {
+        str(value or "").strip()
+        for value in (job_types or [])
+        if str(value or "").strip()
+    }
+    speaker_filter = str(speaker or "").strip()
+    safe_limit = max(1, min(int(limit or 100), 500))
+
+    rows: List[Dict[str, Any]] = []
+    with _jobs_lock:
+        jobs_sorted = sorted(
+            _jobs.values(),
+            key=lambda item: float(item.get("created_ts") or 0.0),
+            reverse=True,
+        )
+        for job in jobs_sorted:
+            job_status = str(job.get("status") or "").strip().lower()
+            if normalized_statuses and job_status not in normalized_statuses:
+                continue
+            job_type = str(job.get("type") or "").strip()
+            if normalized_types and job_type not in normalized_types:
+                continue
+            meta = job.get("meta") if isinstance(job.get("meta"), dict) else {}
+            if speaker_filter and str(meta.get("speaker") or "").strip() != speaker_filter:
+                continue
+            rows.append(_job_detail_payload(job))
+            if len(rows) >= safe_limit:
+                break
+    return rows
+
 
 
 def _job_response_payload(job: Dict[str, Any]) -> Dict[str, Any]:
@@ -5246,19 +5451,21 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             self._api_get_chat_session(parts[3])
             return
 
+        if request_path == "/api/jobs":
+            self._api_get_jobs()
+            return
+
         if request_path == "/api/jobs/active":
             self._api_get_jobs_active()
             return
 
-        if (
-            len(parts) == 4
-            and parts[0] == "api"
-            and parts[1] == "jobs"
-            and parts[3] == "logs"
-        ):
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "jobs" and parts[3] == "logs":
             self._api_get_job_logs(parts[2])
             return
 
+        if len(parts) == 3 and parts[0] == "api" and parts[1] == "jobs":
+            self._api_get_job(parts[2])
+            return
         if request_path == "/api/enrichments":
             self._api_get_enrichments()
             return
@@ -5821,6 +6028,67 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             raise ApiError(HTTPStatus.BAD_REQUEST, "job_id is not a normalize job")
 
         self._send_json(HTTPStatus.OK, _job_response_payload(job))
+
+    def _api_get_jobs(self) -> None:
+        query = urlparse(self.path).query
+        params = {}
+        for piece in query.split("&"):
+            if not piece or "=" not in piece:
+                continue
+            key, value = piece.split("=", 1)
+            params.setdefault(key, []).append(unquote(value))
+
+        statuses = params.get("status") or params.get("statuses")
+        job_types = params.get("type") or params.get("types")
+        speaker = (params.get("speaker") or [None])[0]
+        limit_raw = (params.get("limit") or ["100"])[0]
+        try:
+            limit = int(limit_raw)
+        except (TypeError, ValueError):
+            limit = 100
+
+        rows = _list_jobs_snapshots(
+            statuses=statuses,
+            job_types=job_types,
+            speaker=speaker,
+            limit=limit,
+        )
+        self._send_json(HTTPStatus.OK, {"jobs": rows, "count": len(rows)})
+
+    def _api_get_job(self, job_id_part: str) -> None:
+        job_id = str(job_id_part or "").strip()
+        if not job_id:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "jobId is required")
+        job = _get_job_snapshot(job_id)
+        if job is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "Unknown jobId")
+        self._send_json(HTTPStatus.OK, _job_detail_payload(job))
+
+    def _api_get_job_logs(self, job_id_part: str) -> None:
+        job_id = str(job_id_part or "").strip()
+        if not job_id:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "jobId is required")
+        job = _get_job_snapshot(job_id)
+        if job is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "Unknown jobId")
+        query = urlparse(self.path).query
+        offset = 0
+        limit = JOB_LOG_MAX_ENTRIES
+        for piece in query.split("&"):
+            if not piece or "=" not in piece:
+                continue
+            key, value = piece.split("=", 1)
+            if key == "offset":
+                try:
+                    offset = int(unquote(value))
+                except (TypeError, ValueError):
+                    offset = 0
+            elif key == "limit":
+                try:
+                    limit = int(unquote(value))
+                except (TypeError, ValueError):
+                    limit = JOB_LOG_MAX_ENTRIES
+        self._send_json(HTTPStatus.OK, _job_logs_payload(job, offset=offset, limit=limit))
 
     def _api_get_jobs_active(self) -> None:
         """Return a list of currently-running jobs so the UI can rehydrate
