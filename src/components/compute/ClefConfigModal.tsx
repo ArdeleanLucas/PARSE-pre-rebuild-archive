@@ -44,7 +44,13 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
   const [populating, setPopulating] = useState(false);
   const [populateProgress, setPopulateProgress] = useState(0);
   const [populateMessage, setPopulateMessage] = useState("");
+  /** Set when populate fails so the UI can switch the primary button from
+   *  "Save & populate" to "Retry populate" without throwing away the
+   *  user's language picks. Cleared on successful populate or when they
+   *  plain-save without populate. */
+  const [populateFailed, setPopulateFailed] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [highlightIdx, setHighlightIdx] = useState(0);
 
   const allLanguages = useMemo(() => {
     const byCode = new Map<string, ClefCatalogEntry>();
@@ -161,6 +167,7 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
       }
       setSaving(true);
       setError(null);
+      setPopulateFailed(false);
       try {
         await saveClefConfig(buildPayload());
         if (!runPopulate) {
@@ -188,6 +195,7 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
               setPopulating(false);
               if (s.status === "error" || s.status === "failed") {
                 setError(s.error ?? s.message ?? "Populate failed");
+                setPopulateFailed(true);
               } else {
                 onSaved?.(primary, true);
                 onClose();
@@ -198,17 +206,68 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
           } catch (e) {
             setPopulating(false);
             setError(e instanceof Error ? e.message : "Polling failed");
+            setPopulateFailed(true);
           }
         };
         pollTimerRef.current = setTimeout(poll, 1000);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Save failed");
+        if (runPopulate) setPopulateFailed(true);
       } finally {
         setSaving(false);
       }
     },
     [primary, buildPayload, selectedProviders, overwrite, onSaved, onClose],
   );
+
+  const applyDefaults = useCallback(() => {
+    // Best-guess starter pair for first-time users. Prefers the 3-letter
+    // ISO codes so the selection maps cleanly to the bundled catalog; if
+    // the bundled catalog only has 2-letter fallbacks the backend still
+    // accepts them.
+    const preferred: Array<[string, string]> = [["eng", "English"], ["spa", "Spanish"]];
+    setPrimary(preferred.map(([c]) => c));
+    setSecondary((prev) => {
+      const next = new Set(prev);
+      for (const [c] of preferred) next.delete(c);
+      return next;
+    });
+    // Make sure the catalog has these entries even if the backend call
+    // hasn't returned (offline / 500) -- otherwise save would still work
+    // but the chip list would show only the bare code.
+    setCatalog((prev) => {
+      const have = new Set(prev.map((c) => c.code));
+      const additions = preferred
+        .filter(([c]) => !have.has(c))
+        .map(([code, name]) => ({ code, name }));
+      return additions.length ? [...prev, ...additions] : prev;
+    });
+    setError(null);
+  }, []);
+
+  // Global keyboard shortcuts: Escape closes (unless mid-populate), and
+  // the search list responds to arrow keys / Enter when the search box or
+  // a list row has focus. Arrow keys on the search input move the
+  // highlighted row; Enter toggles it as primary (falls back to secondary
+  // when the primary slots are full).
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: KeyboardEvent) {
+      if (populating) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", handle);
+    return () => window.removeEventListener("keydown", handle);
+  }, [open, populating, onClose]);
+
+  // Reset highlight when the filtered list changes size so we never land
+  // on a stale out-of-range index.
+  useEffect(() => {
+    if (highlightIdx >= filtered.length) setHighlightIdx(0);
+  }, [filtered.length, highlightIdx]);
 
   if (!open) return null;
 
@@ -274,8 +333,20 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
         <div className="flex-1 overflow-auto px-5 py-4">
           {loading && <div className="text-[12px] text-slate-500">Loading…</div>}
           {error && (
-            <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
-              {error}
+            <div className="mb-3 flex items-start gap-2 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold">
+                  {populateFailed ? "Populate failed — your selections were kept" : "Error"}
+                </div>
+                <div className="mt-0.5 break-words">{error}</div>
+                {populateFailed && (
+                  <div className="mt-1 text-rose-500">
+                    Config was saved. Click <b>Retry populate</b> below, or close and run the fetcher
+                    later from the Contact Lexemes panel.
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -327,19 +398,52 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
                   <input
                     type="text"
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search by code, name, or family…"
+                    onChange={(e) => { setSearch(e.target.value); setHighlightIdx(0); }}
+                    onKeyDown={(e) => {
+                      if (filtered.length === 0) return;
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setHighlightIdx((i) => (i + 1) % filtered.length);
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setHighlightIdx((i) => (i - 1 + filtered.length) % filtered.length);
+                      } else if (e.key === "Enter") {
+                        e.preventDefault();
+                        const l = filtered[highlightIdx];
+                        if (!l) return;
+                        // Enter prefers primary when a slot is available,
+                        // otherwise drops into the secondary set -- this
+                        // mirrors the two buttons on the row without
+                        // forcing the user onto Tab.
+                        if (primary.includes(l.code) || primary.length < MAX_PRIMARY) {
+                          togglePrimary(l.code);
+                        } else {
+                          toggleSecondary(l.code);
+                        }
+                      }
+                    }}
+                    placeholder="Search by code, name, or family… (↑/↓ to navigate, Enter to select)"
+                    aria-label="Search contact languages"
+                    aria-controls="clef-language-list"
+                    aria-activedescendant={filtered[highlightIdx] ? `clef-lang-${filtered[highlightIdx].code}` : undefined}
                     className="w-full rounded-md border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-[12px] focus:border-indigo-300 focus:outline-none"
                   />
                 </div>
-                <div className="max-h-64 overflow-auto rounded-md border border-slate-200">
-                  {filtered.map((l) => {
+                <div id="clef-language-list" role="listbox" className="max-h-64 overflow-auto rounded-md border border-slate-200">
+                  {filtered.map((l, idx) => {
                     const isPrimary = primary.includes(l.code);
                     const isSecondary = secondary.has(l.code);
+                    const highlighted = idx === highlightIdx;
                     return (
                       <div
                         key={l.code}
-                        className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5 text-[12px] last:border-b-0"
+                        id={`clef-lang-${l.code}`}
+                        role="option"
+                        aria-selected={isPrimary || isSecondary}
+                        className={
+                          "flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5 text-[12px] last:border-b-0 " +
+                          (highlighted ? "bg-indigo-50" : "")
+                        }
                       >
                         <div className="min-w-0 flex-1">
                           <div className="truncate font-medium text-slate-800">{l.name}</div>
@@ -489,16 +593,25 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3">
           <span className="mr-auto text-[10px] text-slate-400">
             {primary.length} primary · {secondary.size} secondary
           </span>
           <button
+            onClick={applyDefaults}
+            disabled={populating || saving}
+            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+            title="Preselect a sensible starter pair (English + Spanish). You can still edit before saving."
+          >
+            Use defaults
+          </button>
+          <button
             onClick={onClose}
             disabled={populating}
             className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+            title="Close without configuring. The Run button will reopen this modal next time."
           >
-            Cancel
+            Configure later
           </button>
           <button
             onClick={() => handleSave(false)}
@@ -512,7 +625,7 @@ export function ClefConfigModal({ open, onClose, onSaved }: ClefConfigModalProps
             disabled={saving || populating || primary.length === 0}
             className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
           >
-            <Play className="h-3 w-3" /> Save &amp; populate
+            <Play className="h-3 w-3" /> {populateFailed ? "Retry populate" : "Save & populate"}
           </button>
         </div>
       </div>

@@ -7882,9 +7882,46 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
     def _api_get_clef_catalog(self) -> None:
         """Return the bundled SIL/ISO language catalog the configure modal
         uses for its searchable picker. Kept server-side so we can extend
-        it without reshipping the frontend bundle."""
+        it without reshipping the frontend bundle.
+
+        Merges a per-workspace override file at
+        ``config/sil_catalog_extra.json`` on top of the bundled list, so
+        users can add private entries without editing the repo. The extras
+        file may be a bare list or ``{"languages": [...]}``; duplicate
+        codes in the extras replace the bundled entry."""
         from compare.sil_catalog import SIL_CATALOG
-        self._send_json(HTTPStatus.OK, {"languages": SIL_CATALOG})
+
+        merged: Dict[str, Dict[str, Any]] = {}
+        for entry in SIL_CATALOG:
+            code = str(entry.get("code", "")).strip().lower()
+            if not code:
+                continue
+            merged[code] = {k: v for k, v in entry.items() if v is not None}
+
+        extras_path = _project_root() / "config" / "sil_catalog_extra.json"
+        if extras_path.exists():
+            try:
+                with open(extras_path, encoding="utf-8") as f:
+                    raw = json.load(f)
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, dict):
+                raw = raw.get("languages", [])
+            if isinstance(raw, list):
+                for item in raw:
+                    if not isinstance(item, dict):
+                        continue
+                    code = str(item.get("code", "")).strip().lower()
+                    if not code:
+                        continue
+                    merged[code] = {
+                        "code": code,
+                        "name": str(item.get("name") or code),
+                        **({"family": item["family"]} if isinstance(item.get("family"), str) and item["family"].strip() else {}),
+                    }
+
+        languages = sorted(merged.values(), key=lambda x: x.get("name", x.get("code", "")))
+        self._send_json(HTTPStatus.OK, {"languages": languages})
 
     def _api_get_clef_providers(self) -> None:
         """Return the list of CLEF providers in priority order -- drives

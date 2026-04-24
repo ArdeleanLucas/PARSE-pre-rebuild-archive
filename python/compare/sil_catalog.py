@@ -8,6 +8,23 @@ are included as aliases so mixed configs keep working.
 Ordering is "common contact languages first" -- the UI shows the full list
 searchably, but showing e.g. English before Bikol is the sensible default
 for the thesis corpus this feature was built for.
+
+How to extend
+-------------
+
+Two ways:
+
+1. **Edit this file** and add ``{"code": "xxx", "name": "...", "family": "..."}``
+   entries to ``SIL_CATALOG``. Good for permanent additions you want to ship
+   to other PARSE users.
+2. **Per-workspace extras** (no code change, no rebuild): create
+   ``<workspace>/config/sil_catalog_extra.json`` containing either a list
+   in the same shape, or ``{"languages": [...]}``. The server merges these
+   over the bundled list at request time so users can keep private entries
+   out of the repo. See ``_api_get_clef_catalog`` in ``python/server.py``.
+
+A future "Import from Ethnologue" or Glottolog integration would drop into
+the same shape: ``[{"code": ..., "name": ..., "family": ...}]``.
 """
 
 from typing import Dict, List
