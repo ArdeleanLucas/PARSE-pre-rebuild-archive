@@ -6468,7 +6468,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
         progress after a page reload. See ``_list_active_jobs_snapshots``."""
         self._send_json(HTTPStatus.OK, {"jobs": _list_active_jobs_snapshots()})
 
-    def _api_get_job_logs(self, job_id: str) -> None:
+    def _api_get_job_error_logs(self, job_id: str) -> None:
         """Return the error, traceback, and tail of any stderr log files
         associated with a job. Powers the UI's "View crash log" modal.
 

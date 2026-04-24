@@ -26,8 +26,12 @@ PARSE has crossed the React pivot and the unified UI redesign is **merged to `ma
 ## MCP adapter note
 
 - `python/adapters/mcp_adapter.py` now supports `config/mcp_config.json` with `{ "expose_all_tools": true }`.
-- Default MCP surface is **33 tools**: the legacy 29 workflow wrappers, the new generic observability tools (`jobs_list`, `job_status`, `job_logs`), plus read-only `mcp_get_exposure_mode` for self-inspection.
-- Enabling `expose_all_tools` expands the MCP surface to **51 tools**: all 50 `ParseChatTools` plus `mcp_get_exposure_mode`.
+- Default MCP surface is **36 tools**: the legacy 29 `ParseChatTools` wrappers, 3 high-level `WorkflowTools` macros from `python/ai/workflow_tools.py`, the 3 generic observability tools (`jobs_list`, `job_status`, `job_logs`), plus read-only `mcp_get_exposure_mode` for self-inspection.
+- Enabling `expose_all_tools` expands the MCP surface to **54 tools**: all 50 `ParseChatTools`, the 3 `WorkflowTools` macros, plus `mcp_get_exposure_mode`.
+- The workflow macros are:
+  - `run_full_annotation_pipeline`
+  - `prepare_compare_mode`
+  - `export_complete_lingpy_dataset`
 - For backward compatibility, root-level `mcp_config.json` is also accepted when `config/mcp_config.json` is absent.
 - `ChatToolSpec` is the MCP metadata source of truth. MCP tools should forward the strict schema from `spec.parameters`, standard MCP annotations from `spec.mcp_annotations_payload()`, and PARSE-specific safety metadata from `meta["x-parse"] = spec.mcp_meta_payload()`.
 - Mutability meanings:
