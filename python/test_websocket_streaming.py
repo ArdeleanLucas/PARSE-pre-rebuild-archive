@@ -4,7 +4,9 @@ import sys
 import threading
 from typing import Any, Dict, Iterable, Optional
 
-from websockets.sync.client import connect
+import pytest
+
+connect = pytest.importorskip("websockets.sync.client").connect
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import server

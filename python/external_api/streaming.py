@@ -13,8 +13,17 @@ import json
 import threading
 from typing import Any, Callable, Dict, Optional, Set
 
-import websockets
-from websockets.exceptions import ConnectionClosed
+
+def _load_websockets_runtime() -> tuple[Any, type[BaseException]]:
+    try:
+        import websockets
+        from websockets.exceptions import ConnectionClosed
+    except ImportError as exc:
+        raise RuntimeError(
+            "PARSE WebSocket streaming requires the optional 'websockets' package. "
+            "Install it to enable ws://<host>:<PARSE_WS_PORT or 8767>/ws/jobs/{jobId}."
+        ) from exc
+    return websockets, ConnectionClosed
 
 
 class JobStreamingSidecar:
@@ -45,6 +54,7 @@ class JobStreamingSidecar:
         self._subscribers: Dict[str, Set[Any]] = {}
         self._ready = threading.Event()
         self._startup_exception: Optional[BaseException] = None
+        self._connection_closed_exc: Optional[type[BaseException]] = None
 
     @property
     def port(self) -> int:
@@ -136,7 +146,9 @@ class JobStreamingSidecar:
     async def _async_start(self) -> None:
         self._publish_queue = asyncio.Queue()
         self._publisher_task = asyncio.create_task(self._publisher_loop())
-        self._server = await websockets.serve(
+        websockets_mod, connection_closed_exc = _load_websockets_runtime()
+        self._connection_closed_exc = connection_closed_exc
+        self._server = await websockets_mod.serve(
             self._handle_connection,
             self._host,
             self._requested_port,
@@ -192,8 +204,14 @@ class JobStreamingSidecar:
         for conn in recipients:
             try:
                 await conn.send(message)
-            except ConnectionClosed:
-                stale.append(conn)
+            except Exception as exc:
+                if (
+                    self._connection_closed_exc is not None
+                    and isinstance(exc, self._connection_closed_exc)
+                ):
+                    stale.append(conn)
+                    continue
+                raise
         if stale:
             live = self._subscribers.get(job_id)
             if live is not None:
@@ -221,8 +239,13 @@ class JobStreamingSidecar:
             async for _message in conn:
                 # v1 is server-push only; incoming client messages are ignored.
                 continue
-        except ConnectionClosed:
-            return
+        except Exception as exc:
+            if (
+                self._connection_closed_exc is not None
+                and isinstance(exc, self._connection_closed_exc)
+            ):
+                return
+            raise
         finally:
             live = self._subscribers.get(job_id)
             if live is not None:
