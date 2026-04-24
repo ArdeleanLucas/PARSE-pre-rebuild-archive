@@ -2,6 +2,8 @@ import pathlib
 import sys
 from http import HTTPStatus
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import server
 
@@ -33,8 +35,9 @@ def test_job_logs_capture_lifecycle_and_progress() -> None:
     assert isinstance(logs, list)
     assert len(logs) >= 4
     assert logs[0]["event"] == "job.created"
-    assert logs[1]["message"] == "Scanning loudness (pass 1)"
-    assert logs[2]["message"] == "Normalizing audio (pass 2)"
+    assert any(entry["event"] == "job.lock_acquired" for entry in logs)
+    assert any(entry["message"] == "Scanning loudness (pass 1)" for entry in logs)
+    assert any(entry["message"] == "Normalizing audio (pass 2)" for entry in logs)
     assert logs[-1]["event"] == "job.completed"
     assert logs[-1]["message"] == "Normalize complete"
 
@@ -53,7 +56,9 @@ def test_job_lifecycle_supports_queued_running_and_error_states(monkeypatch) -> 
     assert snapshot["status"] == "error"
     assert snapshot["error_code"] == "ffmpeg_failed"
     events = [entry["event"] for entry in snapshot["logs"]]
-    assert events[:2] == ["job.queued", "job.started"]
+    assert events[0] == "job.queued"
+    assert "job.lock_acquired" in events
+    assert "job.started" in events
     assert events[-1] == "job.failed"
 
 
@@ -69,6 +74,38 @@ def test_job_log_ring_buffer_size_is_configurable(monkeypatch) -> None:
     assert snapshot is not None
     assert len(snapshot["logs"]) == 10
     assert snapshot["logs"][-1]["message"] == "step-19"
+
+
+def test_speaker_resource_lock_blocks_concurrent_mutating_jobs_and_releases_on_completion() -> None:
+    server._jobs.clear()
+
+    first_job = server._create_job("normalize", {"speaker": "Fail01", "sourceWav": "audio/Fail01.wav"})
+    first_snapshot = server._get_job_snapshot(first_job)
+    assert first_snapshot is not None
+    assert first_snapshot["locks"]["active"] is True
+    assert first_snapshot["locks"]["resources"] == [{"kind": "speaker", "id": "Fail01"}]
+
+    with pytest.raises(server.JobResourceConflictError) as exc_info:
+        server._create_job("stt", {"speaker": "Fail01", "sourceWav": "audio/Fail01.wav"})
+
+    assert exc_info.value.resource_kind == "speaker"
+    assert exc_info.value.resource_id == "Fail01"
+    assert exc_info.value.holder_job_id == first_job
+
+    probe_job = server._create_job("compute:offset_detect", {"speaker": "Fail01"})
+    assert isinstance(probe_job, str)
+
+    server._set_job_complete(first_job, {"ok": True}, message="Normalize complete")
+    finished_snapshot = server._get_job_snapshot(first_job)
+    assert finished_snapshot is not None
+    assert finished_snapshot["locks"]["active"] is False
+    assert finished_snapshot["locks"]["released_at"] is not None
+
+    second_job = server._create_job("stt", {"speaker": "Fail01", "sourceWav": "audio/Fail01.wav"})
+    second_snapshot = server._get_job_snapshot(second_job)
+    assert second_snapshot is not None
+    assert second_snapshot["locks"]["active"] is True
+    assert second_snapshot["locks"]["resources"] == [{"kind": "speaker", "id": "Fail01"}]
 
 
 def test_api_get_jobs_and_job_logs_return_generic_observability_payloads() -> None:
@@ -95,6 +132,8 @@ def test_api_get_jobs_and_job_logs_return_generic_observability_payloads() -> No
     assert payload["jobId"] == running_job
     assert payload["type"] == "stt"
     assert payload["meta"]["speaker"] == "Fail01"
+    assert payload["locks"]["active"] is True
+    assert payload["locks"]["resources"] == [{"kind": "speaker", "id": "Fail01"}]
 
     handler.path = "/api/jobs/{0}/logs".format(running_job)
     handler._api_get_job_logs(running_job)
@@ -127,3 +166,21 @@ def test_backward_compatible_status_endpoints_still_return_job_payloads() -> Non
     assert payload["jobId"] == normalize_job
     assert payload["status"] == "error"
     assert payload["errorCode"] == "ffmpeg_failed"
+
+
+
+def test_api_rejects_conflicting_speaker_mutation_jobs_with_409() -> None:
+    server._jobs.clear()
+    lock_job = server._create_job("normalize", {"speaker": "Fail01", "sourceWav": "audio/Fail01.wav"})
+
+    handler = _HandlerHarness(
+        "/api/stt",
+        {"speaker": "Fail01", "sourceWav": "audio/Fail01.wav"},
+    )
+
+    with pytest.raises(server.ApiError) as exc_info:
+        handler._api_post_stt_start()
+
+    assert exc_info.value.status == HTTPStatus.CONFLICT
+    assert lock_job in exc_info.value.message
+    assert "Fail01" in exc_info.value.message

@@ -101,8 +101,41 @@ class ApiError(Exception):
         self.message = message
 
 
+class JobResourceConflictError(Exception):
+    """Raised when a background job tries to mutate a speaker already locked by another active job."""
+
+    def __init__(
+        self,
+        *,
+        resource_kind: str,
+        resource_id: str,
+        holder_job_id: str,
+        holder_job_type: str,
+        holder_status: str,
+    ) -> None:
+        self.resource_kind = resource_kind
+        self.resource_id = resource_id
+        self.holder_job_id = holder_job_id
+        self.holder_job_type = holder_job_type
+        self.holder_status = holder_status
+        super().__init__(
+            "{0}:{1} is locked by job {2} ({3}, {4})".format(
+                resource_kind,
+                resource_id,
+                holder_job_id,
+                holder_job_type,
+                holder_status,
+            )
+        )
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+
+def _utc_iso_from_ts(timestamp: float) -> str:
+    return datetime.fromtimestamp(float(timestamp), timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _project_root() -> pathlib.Path:
@@ -2139,13 +2172,17 @@ def _chat_start_compute_job(compute_type: str, payload: Dict[str, Any]) -> str:
         raise ValueError("compute_type is required")
 
     body_obj = dict(payload or {})
+    speaker = str(body_obj.get("speaker") or "").strip() or None
+    job_metadata = {
+        "computeType": normalized_type,
+        "payload": body_obj,
+        "origin": "chat_tool",
+    }
+    if speaker:
+        job_metadata["speaker"] = speaker
     job_id = _create_job(
         "compute:{0}".format(normalized_type),
-        {
-            "computeType": normalized_type,
-            "payload": body_obj,
-            "origin": "chat_tool",
-        },
+        job_metadata,
     )
     # Delegates to thread / subprocess depending on PARSE_COMPUTE_MODE.
     _launch_compute_runner(job_id, normalized_type, body_obj)
@@ -2453,7 +2490,7 @@ def _append_job_log_locked(
     level: str,
     event: str,
     message: str,
-    source: str = "job_registry",
+    source: str = "server",
     progress: Optional[float] = None,
     data: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -2476,6 +2513,129 @@ def _append_job_log_locked(
         del logs[:-log_limit]
 
 
+_MUTATING_SPEAKER_JOB_TYPES = frozenset({"normalize", "stt", "onboard:speaker"})
+_MUTATING_SPEAKER_COMPUTE_TYPES = frozenset(
+    {"stt", "ortho", "ortho_only", "ipa", "ipa_only", "forced_align", "full_pipeline"}
+)
+
+
+
+def _job_lock_resources(job_type: str, metadata: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
+    meta = metadata if isinstance(metadata, dict) else {}
+    speaker = str(meta.get("speaker") or "").strip()
+    if not speaker:
+        return []
+
+    normalized_job_type = str(job_type or "").strip().lower()
+    if normalized_job_type in _MUTATING_SPEAKER_JOB_TYPES:
+        return [{"kind": "speaker", "id": speaker}]
+
+    if normalized_job_type.startswith("compute:"):
+        compute_type = str(meta.get("computeType") or normalized_job_type.split(":", 1)[1] or "").strip().lower()
+        if compute_type in _MUTATING_SPEAKER_COMPUTE_TYPES:
+            return [{"kind": "speaker", "id": speaker}]
+
+    return []
+
+
+
+def _expire_job_locks_locked(job: Dict[str, Any], now_ts: float, *, reason: str = "ttl_expired") -> None:
+    locks = job.get("locks")
+    if not isinstance(locks, dict) or not locks.get("active"):
+        return
+    locks["active"] = False
+    locks["expires_at"] = None
+    locks["expires_ts"] = None
+    locks["released_at"] = _utc_iso_from_ts(now_ts)
+    locks["released_ts"] = now_ts
+    locks["released_reason"] = reason
+
+
+
+def _find_job_resource_conflict_locked(
+    resources: Sequence[Dict[str, str]],
+    *,
+    now_ts: float,
+) -> Optional[Tuple[Dict[str, Any], Dict[str, str]]]:
+    wanted = {
+        (str(resource.get("kind") or "").strip(), str(resource.get("id") or "").strip())
+        for resource in resources
+        if str(resource.get("kind") or "").strip() and str(resource.get("id") or "").strip()
+    }
+    if not wanted:
+        return None
+
+    for job in _jobs.values():
+        if str(job.get("status") or "").strip().lower() not in {"queued", "running"}:
+            continue
+        locks = job.get("locks")
+        if not isinstance(locks, dict) or not locks.get("active"):
+            continue
+        try:
+            expires_ts = float(locks.get("expires_ts") or 0.0)
+        except (TypeError, ValueError):
+            expires_ts = 0.0
+        if expires_ts and expires_ts <= now_ts:
+            _expire_job_locks_locked(job, now_ts)
+            continue
+        for resource in locks.get("resources") or []:
+            resource_kind = str(resource.get("kind") or "").strip()
+            resource_id = str(resource.get("id") or "").strip()
+            if (resource_kind, resource_id) in wanted:
+                return job, {"kind": resource_kind, "id": resource_id}
+    return None
+
+
+
+def _refresh_job_locks_locked(job: Dict[str, Any], now_ts: float) -> None:
+    locks = job.get("locks")
+    if not isinstance(locks, dict) or not locks.get("active"):
+        return
+    ttl_seconds = max(1, int(locks.get("ttl_seconds") or JOB_LOCK_TTL_SECONDS))
+    locks["heartbeat_at"] = _utc_iso_from_ts(now_ts)
+    locks["heartbeat_ts"] = now_ts
+    locks["expires_at"] = _utc_iso_from_ts(now_ts + ttl_seconds)
+    locks["expires_ts"] = now_ts + ttl_seconds
+
+
+
+def _release_job_locks_locked(job: Dict[str, Any], now_ts: float) -> None:
+    locks = job.get("locks")
+    if not isinstance(locks, dict) or not locks.get("active"):
+        return
+    resources = copy.deepcopy(locks.get("resources") or [])
+    locks["active"] = False
+    locks["expires_at"] = None
+    locks["expires_ts"] = None
+    locks["released_at"] = _utc_iso_from_ts(now_ts)
+    locks["released_ts"] = now_ts
+    locks["released_reason"] = "job_finished"
+    if resources:
+        _append_job_log_locked(
+            job,
+            level="info",
+            event="job.lock_released",
+            message="Released job resource lock",
+            progress=_clamp_progress(job.get("progress", 0.0)),
+            data={"resources": resources},
+        )
+
+
+
+def _job_locks_payload(locks: Any) -> Dict[str, Any]:
+    locks_dict = locks if isinstance(locks, dict) else {}
+    resources = locks_dict.get("resources") if isinstance(locks_dict.get("resources"), list) else []
+    return {
+        "active": bool(locks_dict.get("active")),
+        "resources": copy.deepcopy(resources),
+        "heartbeat_at": locks_dict.get("heartbeat_at"),
+        "expires_at": locks_dict.get("expires_at"),
+        "released_at": locks_dict.get("released_at"),
+        "released_reason": locks_dict.get("released_reason"),
+        "ttl_seconds": int(locks_dict.get("ttl_seconds") or JOB_LOCK_TTL_SECONDS),
+    }
+
+
 
 def _create_job(
     job_type: str,
@@ -2491,8 +2651,38 @@ def _create_job(
     normalized_status = str(initial_status or "running").strip().lower() or "running"
     if normalized_status not in {"queued", "running"}:
         normalized_status = "running"
+    resources = _job_lock_resources(job_type, metadata)
 
     with _jobs_lock:
+        conflict = _find_job_resource_conflict_locked(resources, now_ts=now_ts)
+        if conflict is not None:
+            holder_job, resource = conflict
+            raise JobResourceConflictError(
+                resource_kind=str(resource.get("kind") or "resource"),
+                resource_id=str(resource.get("id") or ""),
+                holder_job_id=str(holder_job.get("jobId") or ""),
+                holder_job_type=str(holder_job.get("type") or "unknown"),
+                holder_status=str(holder_job.get("status") or "running"),
+            )
+
+        locks_payload = {
+            "active": bool(resources),
+            "resources": copy.deepcopy(resources),
+            "heartbeat_at": None,
+            "heartbeat_ts": None,
+            "expires_at": None,
+            "expires_ts": None,
+            "released_at": None,
+            "released_ts": None,
+            "released_reason": None,
+            "ttl_seconds": JOB_LOCK_TTL_SECONDS,
+        }
+        if resources:
+            locks_payload["heartbeat_at"] = now_iso
+            locks_payload["heartbeat_ts"] = now_ts
+            locks_payload["expires_at"] = _utc_iso_from_ts(now_ts + JOB_LOCK_TTL_SECONDS)
+            locks_payload["expires_ts"] = now_ts + JOB_LOCK_TTL_SECONDS
+
         job: Dict[str, Any] = {
             "jobId": job_id,
             "type": str(job_type),
@@ -2511,11 +2701,7 @@ def _create_job(
             "updated_ts": now_ts,
             "completed_ts": None,
             "meta": copy.deepcopy(metadata or {}),
-            "locks": {
-                "expires_at": None,
-                "heartbeat_at": None,
-                "ttl_seconds": JOB_LOCK_TTL_SECONDS,
-            },
+            "locks": locks_payload,
             "logs": [],
         }
         _append_job_log_locked(
@@ -2530,6 +2716,15 @@ def _create_job(
                 "meta": copy.deepcopy(metadata or {}),
             },
         )
+        if resources:
+            _append_job_log_locked(
+                job,
+                level="info",
+                event="job.lock_acquired",
+                message="Acquired job resource lock",
+                progress=0.0,
+                data={"resources": copy.deepcopy(resources)},
+            )
         _jobs[job_id] = job
 
     return job_id
@@ -2657,8 +2852,9 @@ def _set_job_running(job_id: str, message: Optional[str] = None) -> None:
             return
         now_ts = time.time()
         job["status"] = "running"
-        job["updated_at"] = _utc_now_iso()
+        job["updated_at"] = _utc_iso_from_ts(now_ts)
         job["updated_ts"] = now_ts
+        _refresh_job_locks_locked(job, now_ts)
         if message is not None:
             job["message"] = str(message)
         _append_job_log_locked(
@@ -2688,8 +2884,9 @@ def _set_job_progress(
         previous_progress = _clamp_progress(job.get("progress", 0.0))
         current_progress = _clamp_progress(progress)
         job["progress"] = current_progress
-        job["updated_at"] = _utc_now_iso()
+        job["updated_at"] = _utc_iso_from_ts(now_ts)
         job["updated_ts"] = now_ts
+        _refresh_job_locks_locked(job, now_ts)
 
         if message is not None:
             job["message"] = str(message)
@@ -2741,14 +2938,15 @@ def _set_job_complete(
             return
 
         now_ts = time.time()
+        now_iso = _utc_iso_from_ts(now_ts)
         job["status"] = "complete"
         job["progress"] = 100.0
         job["result"] = copy.deepcopy(result)
         job["error"] = None
         job["error_code"] = None
-        job["updated_at"] = _utc_now_iso()
+        job["updated_at"] = now_iso
         job["updated_ts"] = now_ts
-        job["completed_at"] = _utc_now_iso()
+        job["completed_at"] = now_iso
         job["completed_ts"] = now_ts
         if message is not None:
             job["message"] = str(message)
@@ -2762,6 +2960,7 @@ def _set_job_complete(
                 job["totalSegments"] = max(0, int(total_segments))
             except (TypeError, ValueError):
                 pass
+        _release_job_locks_locked(job, now_ts)
         _append_job_log_locked(
             job,
             level="info",
@@ -2787,15 +2986,17 @@ def _set_job_error(
             return
 
         now_ts = time.time()
+        now_iso = _utc_iso_from_ts(now_ts)
         job["status"] = "error"
         job["error"] = str(error_message)
         if traceback_str:
             job["traceback"] = str(traceback_str)
         job["error_code"] = _infer_job_error_code(error_message)
-        job["updated_at"] = _utc_now_iso()
+        job["updated_at"] = now_iso
         job["updated_ts"] = now_ts
-        job["completed_at"] = _utc_now_iso()
+        job["completed_at"] = now_iso
         job["completed_ts"] = now_ts
+        _release_job_locks_locked(job, now_ts)
         _append_job_log_locked(
             job,
             level="error",
@@ -2834,6 +3035,7 @@ def _job_detail_payload(job: Dict[str, Any], *, include_logs: bool = False) -> D
     payload["updatedAt"] = job.get("updated_at")
     payload["completedAt"] = job.get("completed_at")
     payload["meta"] = copy.deepcopy(job.get("meta") if isinstance(job.get("meta"), dict) else {})
+    payload["locks"] = _job_locks_payload(job.get("locks"))
     logs = job.get("logs") if isinstance(job.get("logs"), list) else []
     payload["logCount"] = len(logs)
     if include_logs:
@@ -2915,6 +3117,7 @@ def _job_response_payload(job: Dict[str, Any]) -> Dict[str, Any]:
 
     payload["segmentsProcessed"] = int(job.get("segmentsProcessed", 0) or 0)
     payload["totalSegments"] = int(job.get("totalSegments", 0) or 0)
+    payload["locks"] = _job_locks_payload(job.get("locks"))
     if job.get("error_code"):
         payload["errorCode"] = str(job.get("error_code"))
 
@@ -5881,14 +6084,17 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             csv_dest.write_bytes(csv_data)
 
         # Create background job
-        job_id = _create_job(
-            "onboard:speaker",
-            {
-                "speaker": speaker,
-                "wavPath": str(wav_dest.relative_to(_project_root())),
-                "csvPath": str(csv_dest.relative_to(_project_root())) if csv_dest else None,
-            },
-        )
+        try:
+            job_id = _create_job(
+                "onboard:speaker",
+                {
+                    "speaker": speaker,
+                    "wavPath": str(wav_dest.relative_to(_project_root())),
+                    "csvPath": str(csv_dest.relative_to(_project_root())) if csv_dest else None,
+                },
+            )
+        except JobResourceConflictError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, str(exc))
 
         thread = threading.Thread(
             target=_run_onboard_speaker_job,
@@ -5931,13 +6137,16 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "No source audio found for speaker '{0}'. Provide sourceWav explicitly.".format(speaker),
             )
 
-        job_id = _create_job(
-            "normalize",
-            {
-                "speaker": speaker,
-                "sourceWav": source_wav,
-            },
-        )
+        try:
+            job_id = _create_job(
+                "normalize",
+                {
+                    "speaker": speaker,
+                    "sourceWav": source_wav,
+                },
+            )
+        except JobResourceConflictError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, str(exc))
 
         thread = threading.Thread(
             target=_run_normalize_job,
@@ -6271,14 +6480,17 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
         if not source_wav:
             raise ApiError(HTTPStatus.BAD_REQUEST, "sourceWav is required")
 
-        job_id = _create_job(
-            "stt",
-            {
-                "speaker": speaker,
-                "sourceWav": source_wav,
-                "language": language,
-            },
-        )
+        try:
+            job_id = _create_job(
+                "stt",
+                {
+                    "speaker": speaker,
+                    "sourceWav": source_wav,
+                    "language": language,
+                },
+            )
+        except JobResourceConflictError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, str(exc))
 
         _launch_compute_runner(
             job_id, "stt",
@@ -6436,13 +6648,21 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
         body = self._read_json_body(required=False)
         body_obj = self._expect_object(body or {}, "Request body")
 
-        job_id = _create_job(
-            "compute:{0}".format(normalized_type),
-            {
-                "computeType": normalized_type,
-                "payload": body_obj,
-            },
-        )
+        speaker = str(body_obj.get("speaker") or "").strip() or None
+        job_metadata = {
+            "computeType": normalized_type,
+            "payload": body_obj,
+        }
+        if speaker:
+            job_metadata["speaker"] = speaker
+
+        try:
+            job_id = _create_job(
+                "compute:{0}".format(normalized_type),
+                job_metadata,
+            )
+        except JobResourceConflictError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, str(exc))
 
         _launch_compute_runner(job_id, normalized_type, body_obj)
 

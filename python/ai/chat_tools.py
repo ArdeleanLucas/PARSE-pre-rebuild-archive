@@ -4154,6 +4154,7 @@ class ParseChatTools:
             "updatedAt": snapshot.get("updated_at") or snapshot.get("updatedAt"),
             "completedAt": snapshot.get("completed_at") or snapshot.get("completedAt"),
             "meta": copy.deepcopy(snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}),
+            "locks": copy.deepcopy(snapshot.get("locks") if isinstance(snapshot.get("locks"), dict) else {}),
             "logCount": len(snapshot.get("logs")) if isinstance(snapshot.get("logs"), list) else int(snapshot.get("logCount") or 0),
         }
 

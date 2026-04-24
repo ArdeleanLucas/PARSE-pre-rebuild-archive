@@ -441,6 +441,30 @@ def test_audio_normalize_start_supports_dry_run_preview(tmp_path) -> None:
     assert calls == []
 
 
+def test_job_status_surfaces_speaker_lock_metadata(tmp_path) -> None:
+    snapshot = {
+        "jobId": "job-lock",
+        "type": "stt",
+        "status": "running",
+        "progress": 12.5,
+        "message": "Transcribing",
+        "meta": {"speaker": "Fail01"},
+        "locks": {
+            "active": True,
+            "ttl_seconds": 600,
+            "resources": [{"kind": "speaker", "id": "Fail01"}],
+        },
+        "logs": [{"event": "job.created"}],
+    }
+    tools = ParseChatTools(project_root=tmp_path, get_job_snapshot=lambda job_id: snapshot)
+
+    payload = tools.execute("job_status", {"jobId": "job-lock"})["result"]
+
+    assert payload["jobId"] == "job-lock"
+    assert payload["locks"]["active"] is True
+    assert payload["locks"]["resources"] == [{"kind": "speaker", "id": "Fail01"}]
+
+
 def test_source_index_validate_dry_run_does_not_write_output(tmp_path) -> None:
     tools = ParseChatTools(project_root=tmp_path)
     output_path = tmp_path / "source_index.json"
