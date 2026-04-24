@@ -84,6 +84,10 @@ export interface SpeakerHistory {
   redo: HistoryEntry[];
 }
 
+// Max undo-stack depth per speaker. Chosen to keep snapshot memory bounded
+// for long annotation sessions on large records (a full AnnotationRecord
+// with ~5k intervals across tiers is tens of KB; 50 snapshots ≈ a few MB
+// per speaker in the worst case).
 const HISTORY_CAP = 50;
 
 function emptyHistory(): SpeakerHistory {
@@ -93,7 +97,13 @@ function emptyHistory(): SpeakerHistory {
 /** Build a histories delta that pushes `pre` onto the speaker's undo stack
  * and clears redo. Called from inside every mutator with the pre-mutation
  * record so the snapshot captures "the state we're about to leave behind".
- * Returns a Partial<AnnotationStore> fragment ready to spread into set(). */
+ * Returns a Partial<AnnotationStore> fragment ready to spread into set().
+ *
+ * Overflow behavior: when the undo stack reaches HISTORY_CAP (50), the
+ * OLDEST entry is silently dropped (FIFO eviction via `shift()`) so the
+ * most recent 50 operations stay undoable. No toast, no throw — the user
+ * simply can't Ctrl+Z past the cap. The redo stack is not capped here; it
+ * only grows via `undo()` and is naturally bounded by the undo depth. */
 function pushHistoryDelta(
   state: { histories: Record<string, SpeakerHistory> },
   speaker: string,
@@ -102,6 +112,9 @@ function pushHistoryDelta(
 ): { histories: Record<string, SpeakerHistory> } {
   const prev = state.histories[speaker] ?? emptyHistory();
   const undo = [...prev.undo, { snapshot: deepClone(pre), label }];
+  // Drop the oldest snapshot (FIFO) once we exceed HISTORY_CAP. Only one can
+  // exceed per push since we append a single entry, so a single shift() is
+  // enough — no loop needed.
   if (undo.length > HISTORY_CAP) undo.shift();
   return { histories: { ...state.histories, [speaker]: { undo, redo: [] } } };
 }
