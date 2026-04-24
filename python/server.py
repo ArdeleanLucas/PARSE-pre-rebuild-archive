@@ -4187,15 +4187,21 @@ def _compute_contact_lexemes(job_id: str, payload: Dict[str, Any]) -> Dict[str, 
         "config_path": str(config_path),
     }
     if total_filled == 0:
+        # Lead with the fix that resolves the most real-world cases
+        # (network) so users don't have to read the whole paragraph to
+        # know what to try first. Further causes are ordered by how
+        # often they bite in practice.
         result["warning"] = (
-            "Populate finished but no reference forms were found for the "
-            "selected languages. Likely causes: providers are offline or "
-            "unauthenticated (wikidata / wiktionary / grokipedia need "
-            "network, grokipedia needs an xAI key), the concepts in "
-            "concepts.csv don't match ASJP's 40-concept Swadesh list, or "
-            "the local CLDF datasets under config/lexibank_data/ aren't "
-            "installed. Inspect the backend stderr log for per-provider "
-            "errors."
+            "Populate finished with 0 reference forms. "
+            "Try 1: check your internet connection — wikidata, wiktionary, "
+            "asjp, cldf, and grokipedia all need network. "
+            "Try 2: open the CLEF configure modal and enable more providers "
+            "(or leave the list empty to try all built-in providers). "
+            "Other causes: grokipedia needs an xAI API key; lingpy_wordlist "
+            "and pycldf need local CLDF datasets under "
+            "config/lexibank_data/; ASJP only covers 40 Swadesh concepts, "
+            "so glosses outside that list return nothing from it. "
+            "Backend stderr has per-provider errors."
         )
         print("[clef] {0}".format(result["warning"]), file=sys.stderr)
     return result
