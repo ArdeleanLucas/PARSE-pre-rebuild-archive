@@ -37,6 +37,7 @@ HOST = "0.0.0.0"
 PORT = 8766
 JOB_RETENTION_SECONDS = 60 * 60
 JOB_LOG_MAX_ENTRIES = 200
+JOB_LOCK_TTL_SECONDS = 10 * 60
 CONFIG_SCHEMA_VERSION = 1
 
 CORS_HEADERS = {
@@ -2388,6 +2389,40 @@ def _cleanup_old_jobs() -> None:
             _jobs.pop(job_id, None)
 
 
+def _job_log_limit() -> int:
+    raw = str(os.environ.get("PARSE_JOB_LOG_MAX_ENTRIES") or "").strip()
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            parsed = JOB_LOG_MAX_ENTRIES
+        return max(10, min(parsed, 1000))
+    return JOB_LOG_MAX_ENTRIES
+
+
+
+def _infer_job_error_code(error_message: Any) -> str:
+    text = str(error_message or "").strip().lower()
+    if not text:
+        return "job_failed"
+    if "unknown jobid" in text or "unknown job_id" in text:
+        return "job_not_found"
+    if "not a" in text and "job" in text:
+        return "invalid_job_type"
+    if "timeout" in text:
+        return "timeout"
+    if "ffmpeg" in text:
+        return "ffmpeg_failed"
+    if "provider init failed" in text or "loading model" in text:
+        return "model_init_failed"
+    if "cuda" in text or "cublas" in text:
+        return "cuda_runtime_error"
+    if "validation" in text or "required" in text:
+        return "validation_error"
+    return "job_failed"
+
+
+
 def _job_log_entry(
     *,
     level: str,
@@ -2436,26 +2471,36 @@ def _append_job_log_locked(
             data=data,
         )
     )
-    if len(logs) > JOB_LOG_MAX_ENTRIES:
-        del logs[:-JOB_LOG_MAX_ENTRIES]
+    log_limit = _job_log_limit()
+    if len(logs) > log_limit:
+        del logs[:-log_limit]
 
 
 
-def _create_job(job_type: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+def _create_job(
+    job_type: str,
+    metadata: Optional[Dict[str, Any]] = None,
+    *,
+    initial_status: str = "running",
+) -> str:
     _cleanup_old_jobs()
 
     job_id = str(uuid.uuid4())
     now_ts = time.time()
     now_iso = _utc_now_iso()
+    normalized_status = str(initial_status or "running").strip().lower() or "running"
+    if normalized_status not in {"queued", "running"}:
+        normalized_status = "running"
 
     with _jobs_lock:
         job: Dict[str, Any] = {
             "jobId": job_id,
             "type": str(job_type),
-            "status": "running",
+            "status": normalized_status,
             "progress": 0.0,
             "result": None,
             "error": None,
+            "error_code": None,
             "message": None,
             "segmentsProcessed": 0,
             "totalSegments": 0,
@@ -2466,13 +2511,18 @@ def _create_job(job_type: str, metadata: Optional[Dict[str, Any]] = None) -> str
             "updated_ts": now_ts,
             "completed_ts": None,
             "meta": copy.deepcopy(metadata or {}),
+            "locks": {
+                "expires_at": None,
+                "heartbeat_at": None,
+                "ttl_seconds": JOB_LOCK_TTL_SECONDS,
+            },
             "logs": [],
         }
         _append_job_log_locked(
             job,
             level="info",
-            event="job.created",
-            message="Job created",
+            event="job.queued" if normalized_status == "queued" else "job.created",
+            message="Job queued" if normalized_status == "queued" else "Job created",
             progress=0.0,
             data={
                 "jobId": job_id,
@@ -2598,6 +2648,29 @@ def _compute_checkpoint(label: str, **kv: Any) -> None:
         # If the log file is unreachable the compute continues.
         pass
 
+def _set_job_running(job_id: str, message: Optional[str] = None) -> None:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return
+        if str(job.get("status") or "") == "running":
+            return
+        now_ts = time.time()
+        job["status"] = "running"
+        job["updated_at"] = _utc_now_iso()
+        job["updated_ts"] = now_ts
+        if message is not None:
+            job["message"] = str(message)
+        _append_job_log_locked(
+            job,
+            level="info",
+            event="job.started",
+            message=str(job.get("message") or message or "Job started"),
+            progress=_clamp_progress(job.get("progress", 0.0)),
+        )
+
+
+
 def _set_job_progress(
     job_id: str,
     progress: float,
@@ -2672,6 +2745,7 @@ def _set_job_complete(
         job["progress"] = 100.0
         job["result"] = copy.deepcopy(result)
         job["error"] = None
+        job["error_code"] = None
         job["updated_at"] = _utc_now_iso()
         job["updated_ts"] = now_ts
         job["completed_at"] = _utc_now_iso()
@@ -2717,6 +2791,7 @@ def _set_job_error(
         job["error"] = str(error_message)
         if traceback_str:
             job["traceback"] = str(traceback_str)
+        job["error_code"] = _infer_job_error_code(error_message)
         job["updated_at"] = _utc_now_iso()
         job["updated_ts"] = now_ts
         job["completed_at"] = _utc_now_iso()
@@ -2741,7 +2816,7 @@ def _get_job_snapshot(job_id: str) -> Optional[Dict[str, Any]]:
 def _job_logs_payload(job: Dict[str, Any], *, offset: int = 0, limit: int = JOB_LOG_MAX_ENTRIES) -> Dict[str, Any]:
     logs = job.get("logs") if isinstance(job.get("logs"), list) else []
     safe_offset = max(0, int(offset or 0))
-    safe_limit = max(1, min(int(limit or JOB_LOG_MAX_ENTRIES), JOB_LOG_MAX_ENTRIES))
+    safe_limit = max(1, min(int(limit or _job_log_limit()), _job_log_limit()))
     sliced = copy.deepcopy(logs[safe_offset:safe_offset + safe_limit])
     return {
         "jobId": str(job.get("jobId") or ""),
@@ -2840,6 +2915,8 @@ def _job_response_payload(job: Dict[str, Any]) -> Dict[str, Any]:
 
     payload["segmentsProcessed"] = int(job.get("segmentsProcessed", 0) or 0)
     payload["totalSegments"] = int(job.get("totalSegments", 0) or 0)
+    if job.get("error_code"):
+        payload["errorCode"] = str(job.get("error_code"))
 
     if job_type == "chat:run":
         payload["runId"] = job_id
@@ -6073,7 +6150,7 @@ class RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             raise ApiError(HTTPStatus.NOT_FOUND, "Unknown jobId")
         query = urlparse(self.path).query
         offset = 0
-        limit = JOB_LOG_MAX_ENTRIES
+        limit = _job_log_limit()
         for piece in query.split("&"):
             if not piece or "=" not in piece:
                 continue

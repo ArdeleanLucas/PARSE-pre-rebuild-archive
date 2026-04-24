@@ -4148,6 +4148,7 @@ class ParseChatTools:
             "progress": snapshot.get("progress"),
             "message": snapshot.get("message"),
             "error": snapshot.get("error"),
+            "errorCode": snapshot.get("error_code") or snapshot.get("errorCode"),
             "result": snapshot.get("result"),
             "createdAt": snapshot.get("created_at") or snapshot.get("createdAt"),
             "updatedAt": snapshot.get("updated_at") or snapshot.get("updatedAt"),
@@ -4174,6 +4175,8 @@ class ParseChatTools:
             raise ChatToolExecutionError("get_job_logs callback must return an object")
         result = {"readOnly": True}
         result.update(payload)
+        if "logs" in result and isinstance(result["logs"], list):
+            result["logCount"] = len(result["logs"])
         return result
 
     def _tool_jobs_list_active(self, args: Dict[str, Any]) -> Dict[str, Any]:
