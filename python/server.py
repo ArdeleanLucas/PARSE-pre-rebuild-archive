@@ -4173,10 +4173,32 @@ def _compute_contact_lexemes(job_id: str, payload: Dict[str, Any]) -> Dict[str, 
     )
 
     _set_job_progress(job_id, 100.0, message="Done")
-    return {
+
+    # Rich result so the UI can distinguish "job technically succeeded
+    # but populated nothing" from "job populated N forms" -- previously
+    # the header chip turned green with 0 forms and the user had no way
+    # to tell the difference from real success.
+    total_filled = sum(filled.values())
+    result: Dict[str, Any] = {
         "filled": filled,
+        "total_filled": total_filled,
+        "languages_requested": list(languages_raw),
+        "providers_requested": providers or "all",
         "config_path": str(config_path),
     }
+    if total_filled == 0:
+        result["warning"] = (
+            "Populate finished but no reference forms were found for the "
+            "selected languages. Likely causes: providers are offline or "
+            "unauthenticated (wikidata / wiktionary / grokipedia need "
+            "network, grokipedia needs an xAI key), the concepts in "
+            "concepts.csv don't match ASJP's 40-concept Swadesh list, or "
+            "the local CLDF datasets under config/lexibank_data/ aren't "
+            "installed. Inspect the backend stderr log for per-provider "
+            "errors."
+        )
+        print("[clef] {0}".format(result["warning"]), file=sys.stderr)
+    return result
 
 
 _IPA_ALIGNER: Any = None
