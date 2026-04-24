@@ -411,6 +411,7 @@ A few operational rules remain important:
 
 ## Related docs
 
+- External agent onboarding: [Getting Started with External Agents](./getting-started-external-agents.md)
 - Provider and model overview: [AI Integration](./ai-integration.md)
 - User-facing workflow context: [User Guide](./user-guide.md)
 - Data model and system design: [Architecture](./architecture.md)
