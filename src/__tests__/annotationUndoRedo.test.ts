@@ -51,7 +51,9 @@ describe("annotationStore undo/redo", () => {
     expect(merged[0]).toEqual({ start: 0, end: 2, text: "a b" });
 
     const label = useAnnotationStore.getState().undo("S1");
-    expect(label).toContain("merge");
+    // Label flows into the "Undid X" toast — pin the exact human text so a
+    // future "improvement" that reverts to raw slugs gets caught.
+    expect(label).toBe("merge with next (IPA)");
 
     const restored = useAnnotationStore.getState().records.S1.tiers.ipa.intervals;
     expect(restored).toHaveLength(3);
@@ -93,6 +95,36 @@ describe("annotationStore undo/redo", () => {
 
   it("undo returns null when stack is empty", () => {
     expect(useAnnotationStore.getState().undo("S1")).toBeNull();
+  });
+
+  it("labels use human tier names, not raw slugs", () => {
+    const store = useAnnotationStore.getState();
+    store.updateInterval("S1", "ipa", 0, "X");
+    expect(useAnnotationStore.getState().undo("S1")).toBe("text edit (IPA)");
+
+    store.splitInterval("S1", "ipa", 0, 0.5);
+    expect(useAnnotationStore.getState().undo("S1")).toBe("split (IPA)");
+
+    store.removeInterval("S1", "ipa", 0);
+    expect(useAnnotationStore.getState().undo("S1")).toBe("delete IPA segment");
+
+    store.addInterval("S1", "ipa", { start: 10, end: 11, text: "z" });
+    expect(useAnnotationStore.getState().undo("S1")).toBe("add IPA segment");
+
+    store.updateIntervalTimes("S1", "ipa", 0, 0.1, 0.9);
+    expect(useAnnotationStore.getState().undo("S1")).toBe("retime IPA segment");
+  });
+
+  it("setConfirmedAnchor label distinguishes confirm vs clear", () => {
+    const store = useAnnotationStore.getState();
+    store.setConfirmedAnchor("S1", "c1", { start: 0, end: 1 });
+    expect(useAnnotationStore.getState().histories.S1.undo.slice(-1)[0]?.label).toBe(
+      "confirm concept anchor",
+    );
+    store.setConfirmedAnchor("S1", "c1", null);
+    expect(useAnnotationStore.getState().histories.S1.undo.slice(-1)[0]?.label).toBe(
+      "clear concept anchor",
+    );
   });
 
   it("ensureSttTier copies segments and is idempotent", () => {

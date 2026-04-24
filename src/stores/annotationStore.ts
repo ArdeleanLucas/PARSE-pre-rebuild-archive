@@ -84,6 +84,26 @@ export interface SpeakerHistory {
   redo: HistoryEntry[];
 }
 
+// Human-readable tier names for undo/redo labels. Surfaced verbatim in
+// toasts ("Undid text edit (IPA)"), so keep these short and matched to the
+// LANE_LABELS the user already sees in TranscriptionLanes where possible.
+// Unknown/custom tiers fall through to the raw slug, which is still readable
+// (e.g. a custom "gloss" tier shows as "Undid text edit (gloss)").
+const TIER_LABEL: Record<string, string> = {
+  ipa_phone: "Phones",
+  ipa: "IPA",
+  ortho: "ORTH",
+  ortho_words: "ORTH words",
+  stt: "STT",
+  concept: "Concept",
+  sentence: "Sentence",
+  speaker: "Speaker",
+};
+
+function tierLabel(tier: string): string {
+  return TIER_LABEL[tier] ?? tier;
+}
+
 // Max undo-stack depth per speaker. Chosen to keep snapshot memory bounded
 // for long annotation sessions on large records (a full AnnotationRecord
 // with ~5k intervals across tiers is tens of KB; 50 snapshots ≈ a few MB
@@ -308,7 +328,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `set ${tier} interval`),
+      ...pushHistoryDelta(s, speaker, pre, `save ${tierLabel(tier)} segment`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -327,7 +347,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `${tier} text edit`),
+      ...pushHistoryDelta(s, speaker, pre, `text edit (${tierLabel(tier)})`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -361,7 +381,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `add ${tier} interval`),
+      ...pushHistoryDelta(s, speaker, pre, `add ${tierLabel(tier)} segment`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -380,7 +400,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `delete ${tier} interval`),
+      ...pushHistoryDelta(s, speaker, pre, `delete ${tierLabel(tier)} segment`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -408,7 +428,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `retime ${tier} interval`),
+      ...pushHistoryDelta(s, speaker, pre, `retime ${tierLabel(tier)} segment`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -438,7 +458,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `merge with next (${tier})`),
+      ...pushHistoryDelta(s, speaker, pre, `merge with next (${tierLabel(tier)})`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -467,7 +487,7 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, `split ${tier} interval`),
+      ...pushHistoryDelta(s, speaker, pre, `split (${tierLabel(tier)})`),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
@@ -526,7 +546,12 @@ export const useAnnotationStore = create<AnnotationStore>()((set, get) => ({
     clone.modified_at = nowIsoUtc();
 
     set((s) => ({
-      ...pushHistoryDelta(s, speaker, pre, "confirmed-anchor change"),
+      ...pushHistoryDelta(
+        s,
+        speaker,
+        pre,
+        anchor === null ? "clear concept anchor" : "confirm concept anchor",
+      ),
       records: { ...s.records, [speaker]: clone },
       dirty: { ...s.dirty, [speaker]: true },
     }));
