@@ -212,7 +212,30 @@ for job in payload.get("jobs", []):
     )
 ```
 
-This route is useful when you are wrapping PARSE inside your own service and need transport-neutral status data instead of tool-by-tool polling logic.
+### Python example: inspect the stdio adapter directly
+
+For advanced local scripting, you can also instantiate the PARSE MCP server directly inside Python and inspect the registered tool surface without going through a GUI client:
+
+```python
+import asyncio
+import sys
+from pathlib import Path
+
+repo_root = Path("/absolute/path/to/PARSE")
+sys.path.insert(0, str(repo_root / "python"))
+
+from adapters.mcp_adapter import create_mcp_server
+
+server = create_mcp_server(str(repo_root))
+
+a_sync_tools = asyncio.run(server.list_tools())
+print(f"Registered MCP tools: {len(a_sync_tools)}")
+print(sorted(tool.name for tool in a_sync_tools)[:10])
+```
+
+This is useful when you want to validate the active MCP exposure mode or build custom local harnesses around the stdio adapter implementation itself.
+
+These examples are useful when you are wrapping PARSE inside your own service, validating MCP exposure locally, or building custom harnesses around the agent-facing interface.
 
 ## Safety and best practices
 
@@ -223,7 +246,7 @@ This route is useful when you are wrapping PARSE inside your own service and nee
 - **Onboarding/import remains one speaker at a time.** Do not turn speaker onboarding into a bulk-import workflow.
 - **Use coverage-aware checks.** For pipeline decisions, prefer `full_coverage` instead of treating bare `done=true` as sufficient.
 
-## Troubleshooting
+## Common Issues & Solutions
 
 ### The MCP client connects, but tools fail when they try to start or inspect jobs
 
@@ -244,6 +267,15 @@ That is normal. The default MCP surface is curated. If you need the full PARSE t
 ### Can I use an official `parse_mcp` Python package or an HTTP MCP bridge?
 
 Not from the current repository state. The shipped, code-verified external-agent interfaces in this repo are the **stdio MCP adapter** and the **local HTTP API**.
+
+## What’s next
+
+After you are up and running:
+
+- inspect the full MCP surface from your client, or enable `expose_all_tools` if you need the broader PARSE tool set
+- try the workflow macros first: `run_full_annotation_pipeline`, `prepare_compare_mode`, and `export_complete_lingpy_dataset`
+- use `mcp_get_exposure_mode` to confirm which MCP surface the current project is publishing
+- move from this guide into the API and AI docs below when you need full schema and tool-reference detail
 
 ## Further reading
 
