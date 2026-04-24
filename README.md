@@ -54,7 +54,7 @@ It combines:
 - **Tier 2 forced alignment** with wav2vec2 for tighter word-level boundaries
 - **Per-speaker undo/redo** for annotation edits, including merge recovery and STT-tier migration
 - **Draggable timestamp correction** and clip-bounded playback for manual review
-- **Batch transcription** with preflight checks and rerun-failed support
+- **Batch transcription** with preflight checks, per-step **Keep / Overwrite** scope controls, and rerun-failed support
 - **Timestamp-offset detection/apply workflows** for constant CSV↔audio misalignment, now with async progress, crash-log surfacing, and protection for manually adjusted / anchored lexemes
 - **Search & anchor lexeme** tooling built on the Lexical Anchor Alignment System
 - **Shared tags** and the in-session **AI chat dock**
@@ -88,11 +88,12 @@ Supported LLM backends currently include **xAI (Grok)** and **OpenAI**. Local sp
 
 ### MCP & External API
 
-PARSE exposes three machine-facing integration surfaces:
+PARSE exposes four machine-facing integration surfaces:
 
 1. **HTTP API** on `http://localhost:8766`
-2. **HTTP MCP bridge** on the same server for schema discovery + tool execution
-3. **stdio MCP adapter** in `python/adapters/mcp_adapter.py`
+2. **WebSocket job streaming** on `ws://localhost:8767/ws/jobs/{jobId}` (override with `PARSE_WS_PORT`)
+3. **HTTP MCP bridge** on the same server for schema discovery + tool execution
+4. **stdio MCP adapter** in `python/adapters/mcp_adapter.py`
 
 That means external agent clients such as Claude Code, Cursor, Cline, Hermes, Windsurf, Codex, or other MCP-capable tools can call a curated subset of PARSE functions programmatically, without going through the browser UI.
 
@@ -110,6 +111,13 @@ Current counts:
 - `GET /api/jobs/{jobId}/logs` — read structured per-job logs (and crash-log tails when present)
 
 These endpoints back the in-app progress UI, the MCP observability tools, and callback-driven external automation.
+
+#### WebSocket job streaming
+
+- `ws://<host>:<PARSE_WS_PORT or 8767>/ws/jobs/{jobId}`
+- current v1 event types: `job.snapshot`, `job.progress`, `job.log`, `stt.segment`, `job.complete`, `job.error`
+
+Streaming is additive: HTTP polling, callbacks, and MCP observability still work exactly as before.
 
 #### OpenAPI and interactive docs
 

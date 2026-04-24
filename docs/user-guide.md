@@ -107,6 +107,7 @@ The current batch flow includes:
 - preflight pipeline-state checks
 - overwrite warnings
 - explicit ordered steps: **normalize → STT → ORTH → IPA**
+- per-step **Keep / Overwrite** scope toggles when selected speakers already have finalized output
 - step-level failure isolation
 - rerun-failed support
 - a walk-away batch report with expandable tracebacks
@@ -238,6 +239,15 @@ It is implemented as a provider-registry workflow under `python/compare/provider
 
 When a lexical item might reflect contact influence rather than straightforward inheritance, CLEF can fetch comparison data from multiple external and local sources, then surface that evidence during Compare-mode review.
 
+On a fresh workspace, the first run of **Borrowing detection (CLEF)** now opens a guided **Configure CLEF** modal instead of failing on a missing config file. The modal lets you:
+
+- pick 1–2 primary contact languages
+- search a bundled SIL/ISO language catalog
+- enable or disable provider groups before auto-population
+- save the language setup only, or **Save & populate** immediately
+
+The saved config lives at `config/sil_contact_languages.json`; optional extra catalog entries can be provided through `config/sil_catalog_extra.json`.
+
 ### Current provider set (10)
 
 | Provider | Source type |
@@ -255,6 +265,8 @@ When a lexical item might reflect contact influence rather than straightforward 
 
 ### Current CLEF endpoints
 
+- `GET /api/clef/config` — read the current CLEF language configuration
+- `POST /api/clef/config` — save the CLEF language configuration
 - `POST /api/compute/contact-lexemes` — start a contact-lexeme fetch job
 - `GET /api/contact-lexemes/coverage` — inspect current provider coverage
 
