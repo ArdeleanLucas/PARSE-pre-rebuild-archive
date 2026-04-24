@@ -49,9 +49,10 @@ It combines:
 
 - **WaveSurfer 7** waveform review for long recordings
 - **Four annotation tiers**: IPA, orthography, concept, and speaker
-- **Stacked transcription lanes** for STT, IPA, and ORTH with synchronized horizontal scrolling
+- **Stacked transcription lanes** for STT, IPA, and ORTH with synchronized horizontal scrolling and inline edit / split / merge / delete controls
 - **Audio normalization**, **speaker-level STT**, **ORTH transcription**, and **acoustic IPA fill** jobs
 - **Tier 2 forced alignment** with wav2vec2 for tighter word-level boundaries
+- **Per-speaker undo/redo** for annotation edits, including merge recovery and STT-tier migration
 - **Draggable timestamp correction** and clip-bounded playback for manual review
 - **Batch transcription** with preflight checks and rerun-failed support
 - **Timestamp-offset detection/apply workflows** for constant CSV↔audio misalignment, now with async progress, crash-log surfacing, and protection for manually adjusted / anchored lexemes
