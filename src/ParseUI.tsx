@@ -2250,7 +2250,13 @@ export function ParseUI() {
         },
       ];
     });
-    // Flag the lexeme so a later offset apply leaves it untouched.
+    // Flag this lexeme as manually-adjusted so a later global offset
+    // skips it. Scenario: the user fixes lexemes 1–5 (or captures anchors
+    // for them), then later anchors lexemes 10–20 and applies +0.5s. The
+    // flag is what keeps 1–5 from being shifted again and undoing their
+    // verified timing. Capturing an anchor here is an explicit assertion
+    // that this lexeme is correctly placed — no reason to wait for the
+    // user to press Review & apply before locking it.
     markLexemeManuallyAdjusted(activeActionSpeaker, interval.start, interval.end);
     const offset = audio - interval.start;
     const sign = offset >= 0 ? '+' : '';

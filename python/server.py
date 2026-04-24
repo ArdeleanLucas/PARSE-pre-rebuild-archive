@@ -776,17 +776,17 @@ def _annotation_normalize_interval(raw_interval: Any) -> Optional[Dict[str, Any]
     if end < start:
         return None
 
-    normalized: Dict[str, Any] = {
+    # Always emit ``manuallyAdjusted`` — true or false — so every interval
+    # has the same shape on disk. Consumers (UI, agents, Praat export) can
+    # branch on a stable boolean without having to treat "absent" and
+    # "false" as a third case. Legacy records without the key are read
+    # back as false, which matches pre-PR-197 behaviour.
+    return {
         "start": float(start),
         "end": float(end),
         "text": "" if raw_interval.get("text") is None else str(raw_interval.get("text")),
+        "manuallyAdjusted": bool(raw_interval.get("manuallyAdjusted")),
     }
-    # Preserve the user-set manual-adjustment flag so global offset passes
-    # skip intervals the annotator has already locked in. Only emit the key
-    # when true — legacy records stay byte-identical to their prior shape.
-    if bool(raw_interval.get("manuallyAdjusted")):
-        normalized["manuallyAdjusted"] = True
-    return normalized
 
 
 def _annotation_tier_key(raw_name: Any) -> str:

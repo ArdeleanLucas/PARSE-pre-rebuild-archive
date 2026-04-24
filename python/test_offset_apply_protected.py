@@ -87,13 +87,18 @@ def test_normalize_interval_preserves_manually_adjusted_flag() -> None:
     assert normalized["manuallyAdjusted"] is True
 
 
-def test_normalize_interval_omits_flag_when_absent_or_false() -> None:
-    assert "manuallyAdjusted" not in _annotation_normalize_interval(
-        {"start": 1.0, "end": 2.0, "text": "x"}
-    )
-    assert "manuallyAdjusted" not in _annotation_normalize_interval(
+def test_normalize_interval_always_emits_flag_as_bool() -> None:
+    # Absent key → explicit False so every interval has the same shape on
+    # disk (see server._annotation_normalize_interval).
+    absent = _annotation_normalize_interval({"start": 1.0, "end": 2.0, "text": "x"})
+    assert absent is not None
+    assert absent["manuallyAdjusted"] is False
+
+    explicit_false = _annotation_normalize_interval(
         {"start": 1.0, "end": 2.0, "text": "x", "manuallyAdjusted": False}
     )
+    assert explicit_false is not None
+    assert explicit_false["manuallyAdjusted"] is False
 
 
 def _write_speaker_with_lexemes(tmp_path, intervals):
