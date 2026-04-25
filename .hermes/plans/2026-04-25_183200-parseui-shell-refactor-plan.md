@@ -132,6 +132,46 @@ Preserve **Option 1: Domain-Preserving Modularization** from the verified whole-
 
 ## Recommended architecture
 
+### Repo-wide architecture options considered
+This shell plan is local to `src/ParseUI.tsx`, but it is grounded in the repo-wide planning skill's required 3-option comparison.
+
+#### Option 1 — Domain-Preserving Modularization (recommended)
+**Pros**
+- safest migration path for thesis-critical PARSE behavior
+- lowest import/path churn
+- best fit for staged PRs
+- preserves the current frontend/backend mental model
+- lets the frontend shell shrink without forcing backend churn now
+
+**Cons**
+- less visually uniform than a full repo redesign
+- keeps some historical naming in place
+- requires discipline so new shell/app layers stay thin
+
+#### Option 2 — Full Feature-Slice Architecture
+**Pros**
+- strong end-to-end feature ownership
+- elegant on paper if PARSE is reorganized around product flows
+
+**Cons**
+- much higher churn
+- harder to preserve current behavior while migrating
+- stresses tests, imports, docs, and runtime assumptions at once
+
+#### Option 3 — Platform / Package-Oriented Split
+**Pros**
+- cleanest long-term platform architecture
+- strongest package/contract separation
+
+**Cons**
+- highest migration cost
+- not appropriate as the first move during thesis-critical stability work
+- massively expands regression surface across tooling and deployment
+
+### Recommended option and why
+For the whole repo, this plan keeps **Option 1 — Domain-Preserving Modularization** as the explicit recommendation.
+That fits PARSE's current code reality because the repo already has meaningful `annotate`, `compare`, `compute`, `shared`, `hooks`, `stores`, `ai`, `compare`, `external_api`, `adapters`, and `workers` domains. The immediate problem is the `ParseUI.tsx` shell monolith, not a missing top-level package split.
+
 ### Shell target
 Use `src/components/parse/**` only for **unified-shell-specific composition**.
 Do not migrate existing annotate/compare/shared/compute domain components into `parse/` unless they are truly shell-specific wrappers.
@@ -413,6 +453,27 @@ Add isolated tests for:
 - `useSpeakerSelection`
 
 This split prevents `ParseUI.test.tsx` from becoming the only regression net while the shell is decomposed.
+
+## Acceptance criteria
+
+The plan is only implementation-ready when all of these are explicit and preserved:
+- `ParseUI.tsx` ends as a controller/orchestration shell, not a render monolith
+- the implementation keeps exact validation commands front-and-center:
+  - `npm run test -- --run`
+  - `./node_modules/.bin/tsc --noEmit`
+- browser QA targets are named for all 3 workstation modes:
+  - Annotate: waveform, selected speaker, region actions, offset capture path
+  - Compare: concept table, speaker forms, CLEF section, cognate actions
+  - Tags: create/rename/assign flow
+  - global shell: mode switcher, actions menu, right drawer, AI dock
+- the non-regression list remains explicit:
+  - offset flow
+  - keyboard shortcuts
+  - right-panel speaker selection
+  - exports
+  - compare workflows
+  - chat/auth state
+- the plan remains staged into small, reviewable slices rather than a one-pass rewrite
 
 ---
 
