@@ -89,8 +89,8 @@ WebSocket streaming is additive. Clients can continue polling `/api/stt/status`,
 | `GET /api/stt-segments/{speaker}` | Read cached STT segments for a speaker | Returns `segments: []` when cache is missing rather than 404 |
 | `GET /api/enrichments` | Read comparative enrichments | Returns `{ enrichments: ... }` |
 | `GET /api/tags` | Read tag definitions and assignments | Shared across Annotate and Compare |
-| `GET /api/clef/config` | Read CLEF language configuration | Returns primary contact languages plus saved catalog entries |
-| `GET /api/clef/catalog` | Read bundled CLEF language catalog | Includes the SIL/ISO-backed picker data for the Configure CLEF modal |
+| `GET /api/clef/config` | Read CLEF language configuration | Returns primary contact languages plus saved catalog entries, including per-language `script` hints |
+| `GET /api/clef/catalog` | Read bundled CLEF language catalog | Includes the SIL/ISO-backed picker data and ISO 15924 `script` hints for the Configure CLEF modal |
 | `GET /api/clef/providers` | Read available CLEF providers | Returns provider keys, labels, and capability metadata for auto-populate setup |
 | `GET /api/clef/sources-report` | Read CLEF provenance summary | Returns provider-attribution breakdowns and per-form source data for the Sources Report modal |
 | `GET /api/jobs` | List recent backend jobs | Supports status / type / speaker filters and returns generic job snapshots |

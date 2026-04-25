@@ -250,6 +250,8 @@ The Compare table and detail views also follow the configured CLEF primaries dyn
 
 Each reference form row has a checkbox. Those selections persist to `sil_contact_languages.json._meta.form_selections`, and only the selected forms contribute to the similarity score.
 
+Bare-string reference forms are no longer routed by Unicode guessing alone. Each configured contact language now carries an ISO 15924 `script` hint, so PARSE can decide deterministically whether a raw form should land in the IPA-like slot or the script-text slot. Explicit provider labels (`ipa` / `script`) still win over the hint, and the Unicode-block regex remains only as a fallback for legacy or hint-less entries.
+
 On a fresh workspace, the first run of **Borrowing detection (CLEF)** now opens a guided **Configure CLEF** modal instead of failing on a missing config file. The modal lets you:
 
 - pick 1–2 primary contact languages
@@ -277,6 +279,7 @@ The saved config lives at `config/sil_contact_languages.json`; optional extra ca
 ### Current CLEF endpoints
 
 - `GET /api/clef/config` — read the current CLEF language configuration
+- `GET /api/clef/catalog` — read the bundled CLEF language catalog, including per-language ISO 15924 script hints
 - `GET /api/clef/sources-report` — read corpus-wide provider provenance for populated reference forms
 - `POST /api/clef/config` — save the CLEF language configuration
 - `POST /api/clef/form-selections` — persist which reference forms should count toward similarity scoring

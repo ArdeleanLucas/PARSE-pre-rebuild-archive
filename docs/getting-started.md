@@ -295,6 +295,8 @@ On the first CLEF run, PARSE opens a guided **Configure CLEF** modal that lets y
 - search the bundled SIL/ISO catalog
 - save the language config only, or **Save & populate** immediately
 
+Catalog entries now include an ISO 15924 `script` hint, and PARSE persists that hint into the CLEF config so bare Reference Forms can be routed deterministically even when providers return unlabeled raw strings.
+
 The resulting config is written to:
 
 - `config/sil_contact_languages.json`
