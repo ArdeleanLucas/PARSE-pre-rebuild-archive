@@ -1,6 +1,6 @@
 # MCP / Agent Integration Roadmap
 
-Future improvements to make PARSE a first-class citizen in agent-driven workflows.
+Historical roadmap for making PARSE a first-class citizen in agent-driven workflows. Most core milestones below are now shipped on `main`; the remaining section is the real future-work list.
 
 ---
 
@@ -27,10 +27,20 @@ Future improvements to make PARSE a first-class citizen in agent-driven workflow
 
 ## 2. Richer, safer tool definitions
 
-- Strict JSON schemas and detailed parameter descriptions for every tool (MCP supports this natively).
-- Expose dry-run / preview mode on all mutating tools (many already have it internally).
-- Add `preconditions` and `postconditions` fields so agents can reason safely:
-  > "this tool requires a loaded project and at least one audio file"
+**Status:** ✅ Complete
+
+**Shipped:**
+- MCP-visible PARSE tools now publish strict JSON Schemas from `ChatToolSpec.parameters`.
+- Tool metadata includes PARSE-specific safety payloads in `meta["x-parse"]`, including:
+  - `mutability`
+  - `supports_dry_run`
+  - `dry_run_parameter`
+  - `preconditions`
+  - `postconditions`
+- Mutating and job-starting tools now expose dry-run previews where supported.
+- Long-running starters are classified as `stateful_job`, so agents can distinguish read-only inspection from direct mutation and from queued/background work.
+
+This means agents can now inspect machine-readable tool contracts instead of inferring risk and workflow semantics from prose alone.
 
 ---
 
@@ -98,6 +108,14 @@ These changes make long-running PARSE jobs inspectable across the UI, HTTP autom
   - exposure modes
   - the local authentication model
   - the OpenAPI endpoints
+- The standardized external HTTP surface now also includes non-MCP agent-relevant helper routes such as:
+  - `GET/POST /api/clef/config`
+  - `GET /api/clef/catalog`
+  - `GET /api/clef/providers`
+  - `GET /api/clef/sources-report`
+  - `POST /api/clef/form-selections`
+
+These routes matter because current PARSE agent workflows are not limited to the MCP tool catalog; external clients may also need first-class access to CLEF setup, provenance inspection, and reference-form selection state over HTTP.
 
 **Notes:**
 - Existing HTTP and MCP tool behavior remains unchanged; Task 5 standardizes discoverability, schemas, and packaging around the current surface.
@@ -124,6 +142,7 @@ These changes make long-running PARSE jobs inspectable across the UI, HTTP autom
 - First supported realtime workflow is STT:
   - live job progress updates
   - provisional partial segment packets while decoding
+- Generic job events (`job.snapshot`, `job.progress`, `job.log`, `job.complete`, `job.error`) are reusable across job types; `stt.segment` is the STT-specific additive packet.
 - Existing HTTP polling and callback flows remain fully supported and are still the compatibility baseline.
 
 ---
