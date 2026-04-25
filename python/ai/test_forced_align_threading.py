@@ -123,6 +123,7 @@ def test_resolve_device_forces_cpu_on_wsl_even_if_cuda_requested(monkeypatch: py
 def test_aligner_load_cpu_path_sets_thread_limits_before_model_load(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(fa, "_CPU_THREAD_LIMITS_CONFIGURED", False)
     fake_torch = _build_fake_torch_module()
     fake_transformers, model_events = _build_fake_transformers_module()
 
@@ -143,11 +144,40 @@ def test_aligner_load_cpu_path_sets_thread_limits_before_model_load(
     ]
 
 
+def test_aligner_load_cpu_path_tolerates_preconfigured_interop_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(fa, "_CPU_THREAD_LIMITS_CONFIGURED", False)
+    fake_torch = _build_fake_torch_module()
+
+    def _fail(_: int) -> None:
+        raise RuntimeError(
+            "Error: cannot set number of interop threads after parallel work has started "
+            "or set_num_interop_threads called"
+        )
+
+    fake_torch.set_num_interop_threads = _fail  # type: ignore[attr-defined]
+    fake_transformers, model_events = _build_fake_transformers_module()
+
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    aligner = fa.Aligner.load(model_name="dummy", device="cpu")
+
+    assert aligner.device == "cpu"
+    assert fake_torch.calls == [("set_num_threads", 1)]  # type: ignore[attr-defined]
+    assert model_events == [
+        ("from_pretrained", "dummy"),
+        ("to", "cpu"),
+        ("eval", None),
+    ]
+
+
 @pytest.mark.skipif(
     not REAL_TORCH_SUBPROCESS_AVAILABLE,
     reason="requires /usr/bin/python3 with torch installed",
 )
-def test_real_repo_cpu_load_reproduces_exact_pytorch_interop_error(tmp_path: pathlib.Path) -> None:
+def test_real_repo_cpu_load_tolerates_preconfigured_pytorch_interop_threads(tmp_path: pathlib.Path) -> None:
     repo_python = pathlib.Path(__file__).resolve().parents[1]
     script = tmp_path / "forced_align_thread_repro.py"
     script.write_text(
@@ -201,7 +231,8 @@ def test_real_repo_cpu_load_reproduces_exact_pytorch_interop_error(tmp_path: pat
             from ai.forced_align import Aligner
 
             torch.set_num_interop_threads(1)
-            Aligner.load(model_name='dummy', device='cpu')
+            aligner = Aligner.load(model_name='dummy', device='cpu')
+            print('ALIGNER_DEVICE', getattr(aligner, 'device', '?'))
             """
         ),
         encoding="utf-8",
@@ -215,10 +246,6 @@ def test_real_repo_cpu_load_reproduces_exact_pytorch_interop_error(tmp_path: pat
     )
 
     combined = result.stdout + result.stderr
-    assert result.returncode != 0
-    assert "forced_align.py" in combined
-    assert "torch.set_num_interop_threads(1)" in combined
-    assert (
-        "RuntimeError: Error: cannot set number of interop threads after parallel work has started "
-        "or set_num_interop_threads called"
-    ) in combined
+    assert result.returncode == 0, combined
+    assert "ALIGNER_DEVICE cpu" in combined
+    assert "cannot set number of interop threads" not in combined

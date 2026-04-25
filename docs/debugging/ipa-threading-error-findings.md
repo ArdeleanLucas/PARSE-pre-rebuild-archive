@@ -153,13 +153,13 @@ Error: cannot set number of interop threads after parallel work has started or s
 
 This proves that `torch.set_num_interop_threads()` is not a normal per-call option — it is effectively an early/one-shot global setting.
 
-## Demonstration B — the real PARSE code path reproduces the failure
+## Demonstration B — the real PARSE code path reproduced the failure before the fix
 
 To avoid downloading the full wav2vec2 stack while still exercising the repository code path, I ran the real `Aligner.load(..., device='cpu')` function with:
 - **real** PyTorch from `/usr/bin/python3`, and
 - **fake** transformers classes injected via `sys.modules`.
 
-Reproducer:
+Historical reproducer (run before the fix in this PR):
 
 ```python
 import pathlib
@@ -226,7 +226,65 @@ Traceback (most recent call last):
 RuntimeError: Error: cannot set number of interop threads after parallel work has started or set_num_interop_threads called
 ```
 
-This is the strongest evidence in the investigation: it reproduces the **same error string** at the **same repository call site** (`forced_align.py` line 183) without needing the full production model load.
+This is the strongest evidence in the investigation: it reproduced the **same error string** at the **same repository call site** (`forced_align.py` line 183) without needing the full production model load.
+
+---
+
+## Fix implemented in this PR
+
+The bug fix keeps the CPU single-thread preference but stops treating late
+PyTorch inter-op configuration as fatal.
+
+New helper in `python/ai/forced_align.py`:
+
+```python
+def _configure_torch_cpu_thread_limits(torch_module: Any) -> None:
+    global _CPU_THREAD_LIMITS_CONFIGURED
+    if _CPU_THREAD_LIMITS_CONFIGURED:
+        return
+
+    with _CPU_THREAD_LIMITS_LOCK:
+        if _CPU_THREAD_LIMITS_CONFIGURED:
+            return
+
+        torch_module.set_num_threads(1)
+        try:
+            torch_module.set_num_interop_threads(1)
+        except RuntimeError as exc:
+            if "cannot set number of interop threads" not in str(exc):
+                raise
+            print(
+                "[ALIGN] torch interop threads already configured; continuing with existing setting.",
+                file=sys.stderr,
+                flush=True,
+            )
+        _CPU_THREAD_LIMITS_CONFIGURED = True
+```
+
+And `Aligner.load()` now does:
+
+```python
+if resolved_device == "cpu":
+    _configure_torch_cpu_thread_limits(torch)
+```
+
+### Why this is the right fix
+
+- It addresses the real root cause: `set_num_interop_threads()` is a one-shot
+  global setting, but the aligner was trying to set it inside a late lazy load.
+- It preserves the original intent (`set_num_threads(1)` on CPU).
+- It makes the late lazy-load path safe in the long-lived threaded server.
+- It avoids repeating the same failing `set_num_interop_threads()` call after
+  the first successful or already-frozen attempt.
+
+### Post-fix demonstration
+
+After the fix, the same style of subprocess repro succeeds instead of crashing:
+
+```text
+[ALIGN] torch interop threads already configured; continuing with existing setting. current=1
+ALIGNER_OK cpu
+```
 
 ---
 
@@ -236,11 +294,12 @@ File added:
 
 - `python/ai/test_forced_align_threading.py`
 
-What it confirms:
+What it now confirms:
 
 1. `resolve_device()` forces CPU on WSL.
 2. The CPU branch of `Aligner.load()` calls `torch.set_num_threads(1)` and `torch.set_num_interop_threads(1)`.
-3. The real repository code path reproduces the exact RuntimeError in a subprocess using real PyTorch.
+3. If PyTorch reports that inter-op threads are already frozen, PARSE now treats that condition as benign and still loads the aligner.
+4. The real repository code path now succeeds in a subprocess using real PyTorch even when `torch.set_num_interop_threads(1)` has already been called.
 
 Recommended command:
 
@@ -248,19 +307,19 @@ Recommended command:
 pytest python/ai/test_forced_align_threading.py -q
 ```
 
-Observed result on this machine:
+Observed result on this machine after the fix:
 
 ```text
-...                                                                      [100%]
-3 passed in 1.64s
+....                                                                     [100%]
+4 passed in 1.90s
 ```
 
 Additional validation run before shipping this branch:
 
 ```text
 pytest python/ai/test_forced_align.py python/ai/test_forced_align_threading.py -q
-.............                                                            [100%]
-13 passed in 1.75s
+..............                                                           [100%]
+14 passed in 1.88s
 
 npm run test -- --run
 40 passed / 272 tests
@@ -275,11 +334,12 @@ npm run test -- --run
 
 ### Confirmed
 
-- The failure is in the **lazy aligner loader**, not in speaker-specific IPA decoding.
+- The failure originated in the **lazy aligner loader**, not in speaker-specific IPA decoding.
 - Under this runtime, wav2vec2 IPA is on the **CPU** branch.
 - That CPU branch calls `torch.set_num_interop_threads(1)`.
-- The exact repository code path can reproduce the same RuntimeError.
-- The current placement of that call inside a late lazy loader is unsafe in a long-lived threaded server process.
+- Before this fix, the exact repository code path reproduced the same RuntimeError.
+- After this fix, the same code path tolerates the already-frozen inter-op setting and continues loading the aligner.
+- The original placement of the raw `set_num_interop_threads(1)` call inside a late lazy loader was unsafe in a long-lived threaded server process.
 
 ### Important nuance
 
@@ -296,8 +356,8 @@ Together, those facts are sufficient to explain why this call site is brittle an
 
 ## Practical conclusion
 
-The IPA error means:
+The pre-fix IPA error meant:
 
-> PARSE is trying to configure PyTorch's global inter-op thread policy too late, inside a lazy-loaded CPU wav2vec2 aligner, after the long-lived server process has already reached a state where PyTorch no longer allows that setting to change.
+> PARSE was trying to configure PyTorch's global inter-op thread policy too late, inside a lazy-loaded CPU wav2vec2 aligner, after the long-lived server process had already reached a state where PyTorch no longer allowed that setting to change.
 
-That is why STT and orthography can complete while IPA fails consistently at aligner initialization.
+This fix changes that late lazy-load path from **fatal** to **tolerant** for the specific already-frozen inter-op-thread condition, while preserving the CPU single-thread preference that motivated the original code.
