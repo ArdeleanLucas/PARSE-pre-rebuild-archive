@@ -426,7 +426,8 @@ This plan succeeds if:
    - jobs
    - exports
    - desktop-critical constraints
-4. Start the rebuild with shell/bootstrap + parity harness first.
+4. Use `docs/plans/option1-two-agent-parallel-rebuild-plan.md` as the execution split for two main agents + subagents.
+5. Start the rebuild with shell/bootstrap + parity harness first.
 
 ---
 
