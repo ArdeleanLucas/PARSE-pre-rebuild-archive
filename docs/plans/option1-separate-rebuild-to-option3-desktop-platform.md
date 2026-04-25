@@ -316,6 +316,73 @@ Targets:
 - `chat_tools.py` decomposition
 - route/service separation for advanced compute paths
 
+### Phase 3 target structure (expected rebuild-repo shape by end of phase)
+
+By the end of Phase 3, the separate rebuild repo should still be recognizably **Option 1**, but mature enough that the later Option-3 promotion is mostly packaging/boundary work rather than another rewrite.
+
+```text
+<rebuild-repo>/
+├── desktop/
+│   ├── electron-main/
+│   ├── preload/
+│   └── packaging/
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── router.tsx
+│   │   │   ├── layouts/
+│   │   │   └── providers/
+│   │   ├── api/
+│   │   ├── components/
+│   │   │   ├── annotate/
+│   │   │   ├── compare/
+│   │   │   ├── compute/
+│   │   │   ├── shell/
+│   │   │   └── shared/
+│   │   ├── hooks/
+│   │   ├── stores/
+│   │   ├── lib/
+│   │   └── workers/
+│   └── tests/
+├── backend/
+│   ├── app/
+│   │   ├── routes/
+│   │   ├── jobs/
+│   │   ├── http/
+│   │   ├── services/
+│   │   └── bootstrap.py
+│   ├── ai/
+│   │   ├── chat/
+│   │   ├── providers/
+│   │   ├── stt/
+│   │   ├── ipa/
+│   │   └── workflow/
+│   ├── compare/
+│   │   ├── providers/
+│   │   ├── cognates/
+│   │   ├── offsets/
+│   │   └── contact_lexemes/
+│   ├── external_api/
+│   ├── adapters/
+│   ├── workers/
+│   ├── shared/
+│   └── tests/
+├── parity/
+│   ├── fixtures/
+│   ├── contracts/
+│   ├── browser-checklists/
+│   ├── export-goldens/
+│   └── comparison-scripts/
+└── docs/
+```
+
+### Why this Phase 3 structure matters
+- the **desktop shell is already first-class**
+- the **frontend shell and pages are separated from shared primitives**
+- the **backend transport layer is already thinner than today's `server.py`**
+- AI/compare domains are already decomposed enough to extract later into real packages
+- parity assets remain explicit and continuously maintained during the rebuild
+
 ## Phase 4 — Promote toward Option 3
 
 Deliverables:
