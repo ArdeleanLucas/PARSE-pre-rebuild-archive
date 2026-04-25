@@ -49,12 +49,12 @@ It combines:
 
 - **WaveSurfer 7** waveform review for long recordings
 - **Four annotation tiers**: IPA, orthography, concept, and speaker
-- **Stacked transcription lanes** for STT, IPA, and ORTH with synchronized horizontal scrolling and inline edit / split / merge / delete controls
+- **Stacked transcription lanes** for STT, IPA, ORTH, and an optional **Boundaries** diagnostic lane with synchronized horizontal scrolling and inline edit / split / merge / delete controls
 - **Audio normalization**, **speaker-level STT**, **ORTH transcription**, and **acoustic IPA fill** jobs
-- **Tier 2 forced alignment** with wav2vec2 for tighter word-level boundaries
+- **Tier 2 forced alignment** with wav2vec2 for tighter word-level boundaries plus a read-only boundary-delta overlay for spotting Tier 1 drift
 - **Per-speaker undo/redo** for annotation edits, including merge recovery and STT-tier migration
 - **Draggable timestamp correction** and clip-bounded playback for manual review
-- **Batch transcription** with preflight checks, per-step **Keep / Overwrite** scope controls, and rerun-failed support
+- **Batch transcription** with preflight checks, per-step **Keep / Overwrite** scope controls, rerun-failed support, and report rows that preserve backend job ids when the UI loses `/api` connectivity mid-run
 - **Timestamp-offset detection/apply workflows** for constant CSV↔audio misalignment, now with async progress, crash-log surfacing, and protection for manually adjusted / anchored lexemes
 - **Search & anchor lexeme** tooling built on the Lexical Anchor Alignment System
 - **Shared tags** and the in-session **AI chat dock**
@@ -181,7 +181,7 @@ PARSE is designed around a real fieldwork sequence rather than a toy demo sequen
 4. **Correct timestamps and confirm segments** in Annotate mode
 5. **Search and anchor difficult lexemes** across long recordings
 6. **Compare the concept set across speakers** in the matrix view
-7. **Use CLEF evidence** when a borrowing analysis needs external lexical context — the first time you run **Borrowing detection (CLEF)** from the Compute panel, PARSE opens a guided setup modal where you pick 1–2 primary contact languages (English + Spanish by default) and optionally auto-populate lexeme forms from the provider stack. The config lives in `config/sil_contact_languages.json`; extend the language picker with `config/sil_catalog_extra.json`. Each language now also carries an ISO 15924 `script` hint so bare Reference Forms route deterministically between IPA-like Latin text and non-Latin script text.
+7. **Use CLEF evidence** when a borrowing analysis needs external lexical context — the first time you run **Borrowing detection (CLEF)** from the Compute panel, PARSE opens a guided setup modal where you pick 1–2 primary contact languages (English + Spanish by default) and optionally auto-populate lexeme forms from the provider stack. The config lives in `config/sil_contact_languages.json`; extend the language picker with `config/sil_catalog_extra.json`. Each language now also carries an ISO 15924 `script` hint so bare Reference Forms route deterministically between IPA-like Latin text and non-Latin script text. If your workspace was populated before the 2026-04-25 exact-match fix for `lingpy_wordlist`, rerun CLEF populate with overwrite so any previously misbucketed doculect forms are replaced.
 8. **Export LingPy TSV or NEXUS** for downstream comparative and phylogenetic analysis
 
 The guiding principle is simple: timestamps are central, human review stays explicit, and automation should make linguistic judgment faster rather than opaque.
