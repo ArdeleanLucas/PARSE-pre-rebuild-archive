@@ -171,8 +171,15 @@ Even though the immediate strategy is Option 1, the rebuild repo can still be la
 ├── parity/
 │   ├── fixtures/
 │   ├── contracts/
-│   ├── browser-checklists/
-│   └── comparison-scripts/
+│   ├── ui/
+│   │   ├── checklists/
+│   │   └── screenshots/
+│   ├── api/
+│   │   ├── snapshots/
+│   │   └── contract-tests/
+│   ├── jobs/
+│   ├── export/
+│   └── deviations.md
 └── docs/
 ```
 
@@ -258,10 +265,11 @@ For thesis-critical workflows:
 ### 7.3 Parity artifacts to maintain
 
 The rebuild repo should keep a dedicated `parity/` directory for:
-- golden fixtures
-- route snapshots
-- UI checklists
-- export comparisons
+- shared fixtures and oracle baseline snapshots
+- UI checklists and screenshots
+- API contract snapshots/tests
+- job traces/logs
+- export comparisons/goldens
 - known deviations with justification
 
 ---
@@ -275,6 +283,8 @@ The rebuild repo should keep a dedicated `parity/` directory for:
 Deliverables:
 - plan-only PR in current PARSE repo
 - rebuild repo scaffold
+- `docs/plans/option1-parity-inventory.md` as the parity scope + evidence contract
+- `docs/plans/option1-phase0-shared-contract-checklist.md` as the coordinator gate before parallel work
 - initial parity checklist
 - explicit contract inventory from current PARSE
 
@@ -370,9 +380,15 @@ By the end of Phase 3, the separate rebuild repo should still be recognizably **
 ├── parity/
 │   ├── fixtures/
 │   ├── contracts/
-│   ├── browser-checklists/
-│   ├── export-goldens/
-│   └── comparison-scripts/
+│   ├── ui/
+│   │   ├── checklists/
+│   │   └── screenshots/
+│   ├── api/
+│   │   ├── snapshots/
+│   │   └── contract-tests/
+│   ├── jobs/
+│   ├── export/
+│   └── deviations.md
 └── docs/
 ```
 
@@ -420,14 +436,15 @@ This plan succeeds if:
 
 1. Approve the architecture decision: **separate rebuild repo now, Option 1 initially, Option 3 later**.
 2. Create the rebuild repo.
-3. Write a concrete parity inventory from the current PARSE repo:
-   - pages
+3. Use `docs/plans/option1-parity-inventory.md` to freeze the parity scope for:
+   - pages / workbenches
    - APIs
    - jobs
    - exports
    - desktop-critical constraints
-4. Use `docs/plans/option1-two-agent-parallel-rebuild-plan.md` as the execution split for two main agents + subagents.
-5. Start the rebuild with shell/bootstrap + parity harness first.
+4. Use `docs/plans/option1-phase0-shared-contract-checklist.md` to block Agent A / Agent B divergence until the shared contract is frozen.
+5. Use `docs/plans/option1-two-agent-parallel-rebuild-plan.md` as the execution split for two main agents + subagents.
+6. Start the rebuild with shell/bootstrap + parity harness first.
 
 ---
 

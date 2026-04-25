@@ -2,7 +2,11 @@
 
 **Status:** Proposed execution-planning doc for the separate rebuild repo  
 **Date:** 2026-04-25  
-**Depends on:** `docs/plans/option1-separate-rebuild-to-option3-desktop-platform.md`  
+**Depends on:**
+- `docs/plans/option1-separate-rebuild-to-option3-desktop-platform.md`
+- `docs/plans/option1-parity-inventory.md`
+- `docs/plans/option1-phase0-shared-contract-checklist.md`
+
 **Primary goal:** execute the separate rebuild repo efficiently with **two main agents in parallel**, each allowed to use **subagents within owned boundaries**, without colliding on the same files.
 
 ---
@@ -71,6 +75,8 @@ These must be written once and then treated as frozen/shared unless the coordina
   docs/contracts/
   docs/architecture/
   parity/contracts/
+  parity/fixtures/
+  parity/deviations.md
   .github/workflows/
   root toolchain/bootstrap config
 ```
@@ -79,6 +85,7 @@ Examples:
 - root README
 - architecture docs
 - parity contract snapshots / schemas
+- shared fixtures and deviation log
 - CI workflow files
 - top-level workspace metadata
 
@@ -129,8 +136,9 @@ No implementation starts until Phase 0 is complete.
 The coordinator must define and freeze:
 
 1. **Behavior oracle set**
-   - which current PARSE pages/workflows are in parity scope first
-   - annotate / compare / tags / export / jobs / auth / desktop bootstrap
+   - which current PARSE pages/workflows are in rebuild parity scope
+   - recorded in `docs/plans/option1-parity-inventory.md`, including which rows are P0 vs P1
+   - initial scope includes annotate / compare / tags / export / jobs / auth / desktop bootstrap
 
 2. **Rebuild-repo skeleton**
    - repo layout
@@ -150,15 +158,20 @@ The coordinator must define and freeze:
    - error semantics
 
 5. **Parity artifact layout**
-   - what lives under `parity/ui`, `parity/api`, `parity/jobs`, `parity/export`, `parity/contracts`
+   - what lives under `parity/ui`, `parity/api`, `parity/jobs`, `parity/export`, `parity/contracts`, `parity/fixtures`, and `parity/deviations.md`
 
 6. **Page/workbench inventory**
    - current: Annotate, Compare, Tags, chat/compute shell
    - future placeholders allowed later: training, phonetics, computational-linguistics tools
 
+7. **Coordinator gate checklist**
+   - completion tracked in `docs/plans/option1-phase0-shared-contract-checklist.md`
+
 ## 4.2 Gate commands
 
-Before tracks diverge, both agents must be able to run the same baseline commands successfully in the rebuild repo:
+Before tracks diverge, both agents must be able to run the same baseline commands successfully in the rebuild repo.
+
+These commands assume the coordinator froze a **root workspace** shape in Phase 0. If the rebuild instead uses split manifests, the coordinator must record the exact equivalent frontend/backend commands in `docs/plans/option1-phase0-shared-contract-checklist.md` before parallel work starts:
 
 ```bash
 # frontend shell available
@@ -271,7 +284,7 @@ Objectives:
 Suggested subagent split:
 1. **A1** — desktop shell bootstrap (`desktop/**`)
 2. **A2** — frontend app shell/router/layout (`frontend/src/app/**`)
-3. **A3** — UI primitives + shell page containers (`frontend/src/components/shell/**`, `frontend/src/shared/**`)
+3. **A3** — UI primitives + shell page containers (`frontend/src/components/shell/**`, `frontend/src/components/shared/**`)
 4. **A4** — UI parity checklist scaffold (`parity/ui/**`)
 
 ### Agent B (backend + parity)
@@ -455,6 +468,8 @@ This execution plan succeeds if:
 ## 11. Immediate next actions if this plan is accepted
 
 1. Create the separate rebuild repo.
-2. Let the coordinator land the Phase 0 bootstrap + contract inventory.
-3. Start Agent A and Agent B from their dedicated worktrees/branches.
+2. Let the coordinator land the Phase 0 bootstrap + contract inventory using:
+   - `docs/plans/option1-parity-inventory.md`
+   - `docs/plans/option1-phase0-shared-contract-checklist.md`
+3. Start Agent A and Agent B from their dedicated worktrees/branches only after the Phase-0 checklist is signed off.
 4. Require parity evidence at the end of every phase, not just at the end of the rebuild.
