@@ -49,9 +49,9 @@ It combines:
 
 - **WaveSurfer 7** waveform review for long recordings
 - **Four annotation tiers**: IPA, orthography, concept, and speaker
-- **Stacked transcription lanes** for STT, IPA, ORTH, and an optional **Boundaries** diagnostic lane with synchronized horizontal scrolling and inline edit / split / merge / delete controls
+- **Stacked transcription lanes** for STT, IPA, ORTH, plus optional **Words (Tier 1)** and **Boundaries (Tier 2)** diagnostic lanes with synchronized horizontal scrolling and inline edit / split / merge / delete controls
 - **Audio normalization**, **speaker-level STT**, **ORTH transcription**, and **acoustic IPA fill** jobs
-- **Tier 2 forced alignment** with wav2vec2 for tighter word-level boundaries plus a read-only boundary-delta overlay for spotting Tier 1 drift
+- **Tier 2 forced alignment** with wav2vec2 for tighter word-level boundaries plus paired Tier 1/Tier 2 read-only overlays for spotting boundary drift
 - **Per-speaker undo/redo** for annotation edits, including merge recovery and STT-tier migration
 - **Draggable timestamp correction** and clip-bounded playback for manual review
 - **Batch transcription** with preflight checks, per-step **Keep / Overwrite** scope controls, rerun-failed support, and report rows that preserve backend job ids when the UI loses `/api` connectivity mid-run
@@ -72,7 +72,7 @@ It provides:
 - Per-row editing, speaker flags, and secondary actions for review work
 - **Borrowing adjudication** aided by contact-language similarity evidence, dynamic primary-language similarity columns, and selectable reference forms
 - **Enrichment overlays** for computed comparative metadata
-- The **CLEF** panel for multi-source contact-language lookup, provenance-aware **Sources Report**, and retryable populate workflows
+- The **CLEF** panel for multi-source contact-language lookup, provenance-aware **Sources Report**, academic citation cards, and retryable populate workflows
 - The same shared **tag system** used in Annotate mode
 - Export to **LingPy-compatible TSV** and **NEXUS** for downstream phylogenetic analysis
 
