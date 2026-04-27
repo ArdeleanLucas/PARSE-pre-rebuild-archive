@@ -80,6 +80,12 @@ export interface SttSegmentsPayload {
   source_wav?: string;
   language?: string | null;
   segments: SttSegment[];
+  /** Provenance marker. Set to ``"boundary_constrained"`` when the cache
+   * was populated by the BND-anchored re-transcription job (which uses
+   * the user's edited tiers.ortho_words intervals as authoritative
+   * windows instead of letting Whisper segment from scratch). Absent
+   * for vanilla STT runs so the legacy on-disk shape is preserved. */
+  source?: string;
 }
 
 export interface ConceptEntry {

@@ -2171,6 +2171,10 @@ export function ParseUI() {
     },
     autoDismissMs: 4000,
   });
+  // BND-constrained STT speaker placeholder — the actual job hook is
+  // declared further down, after `sttLanguageRef` exists so the start
+  // closure can forward the user's STT language without a TDZ dance.
+  const [bndSttSpeaker, setBndSttSpeaker] = useState<string | null>(null);
   const [clefModalOpen, setClefModalOpen] = useState(false);
   // Sources Report modal — shows provider attribution for every populated
   // reference form. Opened from the Compute panel's CLEF status row; read-
@@ -2384,6 +2388,35 @@ export function ParseUI() {
     try { localStorage.setItem('parse.stt.language', sttLanguage); }
     catch { /* storage unavailable */ }
   }, [sttLanguage]);
+
+  // Boundary-constrained STT — re-transcribe using the user's BND
+  // (tiers.ortho_words) as authoritative segment boundaries. Forwards
+  // the active speaker + STT language in the request body and reloads
+  // the STT cache + annotation on completion so the lane picks up the
+  // new "BND" badge without a full project refetch.
+  const bndSttJob = useActionJob({
+    start: () => {
+      if (!bndSttSpeaker) {
+        return Promise.reject(
+          new Error('Pick a speaker before re-transcribing with boundaries.'),
+        );
+      }
+      return startCompute('retranscribe_with_boundaries', {
+        speaker: bndSttSpeaker,
+        language: sttLanguageRef.current || undefined,
+      });
+    },
+    poll: (jobId) => pollCompute('retranscribe_with_boundaries', jobId),
+    label: 'Re-transcribing with BND…',
+    onComplete: async () => {
+      if (bndSttSpeaker) {
+        await useTranscriptionLanesStore.getState().reloadStt(bndSttSpeaker);
+        await useAnnotationStore.getState().loadSpeaker(bndSttSpeaker);
+      }
+    },
+    autoDismissMs: 4000,
+  });
+
   const activeActionSpeaker = selectedSpeakers[0] ?? null;
   const loadSpeaker = useAnnotationStore((s) => s.loadSpeaker);
   const loadEnrichments = useEnrichmentStore((s) => s.load);
@@ -4657,6 +4690,61 @@ export function ParseUI() {
                         {boundariesJob.state.error?.includes('Run STT first')
                           ? 'Please run STT first before refining boundaries.'
                           : (boundariesJob.state.error ?? 'Boundary refinement failed.')}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* --- BND-constrained STT re-transcription --------------- */}
+                  {/* Re-runs faster-whisper using tiers.ortho_words as
+                       authoritative segment windows — no auto-segmentation,
+                       no full pipeline. Reuses the same STT language input
+                       as the normal "Run STT" action. Distinct from the
+                       vanilla STT job; only this button writes the
+                       "boundary_constrained" provenance marker. */}
+                  <div className="mb-2">
+                    <button
+                      data-testid="phonetic-retranscribe-with-boundaries"
+                      onClick={() => {
+                        const speaker = selectedSpeakers[0] ?? null;
+                        if (!speaker) return;
+                        setBndSttSpeaker(speaker);
+                        void bndSttJob.run();
+                      }}
+                      disabled={
+                        !selectedSpeakers[0] || bndSttJob.state.status === 'running'
+                      }
+                      title="Re-run STT using the BND lane's word boundaries instead of letting Whisper segment from scratch. Useful after manually correcting boundaries."
+                      className="flex w-full items-center gap-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Mic className="h-3.5 w-3.5"/>
+                      <span className="flex-1 text-left">
+                        {bndSttJob.state.status === 'running'
+                          ? 'Re-transcribing with BND…'
+                          : 'Re-run STT with Boundaries'}
+                      </span>
+                      {bndSttJob.state.status === 'running' && (
+                        <span className="rounded bg-white/70 px-1 font-mono text-[9px] text-amber-700">
+                          {Math.round(bndSttJob.state.progress * 100)}%
+                        </span>
+                      )}
+                    </button>
+                    {bndSttJob.state.status === 'running'
+                      && bndSttJob.state.etaMs !== null
+                      && bndSttJob.state.etaMs > 0 && (
+                      <div className="mt-1 text-[10px] text-amber-700">
+                        ~{formatEta(bndSttJob.state.etaMs)} left
+                      </div>
+                    )}
+                    {bndSttJob.state.status === 'complete' && (
+                      <div className="mt-1 text-[10px] text-emerald-700">
+                        STT re-transcribed using BND boundaries.
+                      </div>
+                    )}
+                    {bndSttJob.state.status === 'error' && (
+                      <div className="mt-1 text-[10px] text-rose-700">
+                        {bndSttJob.state.error?.includes('No BND intervals')
+                          ? 'Refine boundaries (BND) first before re-running STT.'
+                          : (bndSttJob.state.error ?? 'BND-constrained STT failed.')}
                       </div>
                     )}
                   </div>
