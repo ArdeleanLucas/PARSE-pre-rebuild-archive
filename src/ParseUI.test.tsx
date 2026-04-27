@@ -937,4 +937,71 @@ describe("Actions menu — transcription run flow", () => {
     // The coarse paragraph must NOT appear as the pre-filled value.
     expect(screen.queryByDisplayValue(COARSE_TEXT)).toBeNull();
   });
+
+  // ── BND-constrained STT button gating ────────────────────────────────
+  // The "Re-run STT with Boundaries" button has nothing to do without
+  // tiers.ortho_words intervals — clicking with an empty BND would just
+  // raise on the backend. These tests guard the disable gate so the
+  // foot-gun stays hidden behind a friendly tooltip until the user
+  // actually has BND data for the active speaker.
+
+  it("disables Re-run STT with Boundaries when the active speaker has no ortho_words intervals", async () => {
+    mockConfig = {
+      project_name: "PARSE",
+      language_code: "ku",
+      speakers: ["Fail01"],
+      concepts: [{ id: "1", label: "water" }],
+      audio_dir: "audio",
+      annotations_dir: "annotations",
+    };
+    // Speaker has STT/ortho but no ortho_words tier at all.
+    mockRecords = {
+      Fail01: makeRecord("Fail01", [
+        { conceptText: "water", ipa: "aw", ortho: "ئاو", start: 1, end: 2 },
+      ]),
+    };
+
+    render(<ParseUI />);
+    await switchToAnnotateMode();
+
+    const button = await screen.findByTestId("phonetic-retranscribe-with-boundaries");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute("title") ?? "").toMatch(/refine boundaries/i);
+  });
+
+  it("enables Re-run STT with Boundaries when the active speaker has ortho_words intervals", async () => {
+    mockConfig = {
+      project_name: "PARSE",
+      language_code: "ku",
+      speakers: ["Fail01"],
+      concepts: [{ id: "1", label: "water" }],
+      audio_dir: "audio",
+      annotations_dir: "annotations",
+    };
+    const base = makeRecord("Fail01", [
+      { conceptText: "water", ipa: "aw", ortho: "ئاو", start: 1, end: 2 },
+    ]);
+    mockRecords = {
+      Fail01: {
+        ...base,
+        tiers: {
+          ...base.tiers,
+          ortho_words: {
+            name: "ortho_words",
+            display_order: 4,
+            intervals: [
+              { start: 1.1, end: 1.4, text: "ئاو" },
+            ],
+          },
+        },
+      },
+    };
+
+    render(<ParseUI />);
+    await switchToAnnotateMode();
+
+    const button = await screen.findByTestId("phonetic-retranscribe-with-boundaries");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(button.getAttribute("title") ?? "").toMatch(/respects your manual boundary corrections/i);
+  });
 });

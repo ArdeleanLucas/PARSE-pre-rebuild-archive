@@ -15,7 +15,8 @@ Tools exposed:
     stt_start, stt_status, pipeline_run, compute_status,
     stt_word_level_start, stt_word_level_status,
     forced_align_start, forced_align_status,
-    ipa_transcribe_acoustic_start, ipa_transcribe_acoustic_status
+    ipa_transcribe_acoustic_start, ipa_transcribe_acoustic_status,
+    retranscribe_with_boundaries_start, retranscribe_with_boundaries_status
   Offset alignment:
     detect_timestamp_offset, detect_timestamp_offset_from_pair,
     apply_timestamp_offset
@@ -1230,6 +1231,54 @@ def create_mcp_server(project_root: Optional[str] = None) -> "FastMCP":
             jobId: The job ID returned by ipa_transcribe_acoustic_start
         """
         result = tools.execute("ipa_transcribe_acoustic_status", {"jobId": jobId})
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    @mcp.tool()
+    def retranscribe_with_boundaries_start(
+        speaker: str,
+        language: Optional[str] = None,
+        dryRun: Optional[bool] = None,
+    ) -> str:
+        """Start a boundary-constrained STT job for a speaker.
+
+        Reads the speaker's BND lane (tiers.ortho_words) as authoritative
+        segment boundaries, slices the source audio in memory at each
+        (start, end) window, and runs faster-whisper independently on
+        every slice with word_timestamps=True. Per-segment results are
+        offset back into the global timeline and written to
+        coarse_transcripts/<speaker>.json with a top-level
+        source: "boundary_constrained" provenance marker.
+
+        This job is intentionally separate from stt_start — vanilla STT
+        remains independently runnable and is unaffected. Requires
+        tiers.ortho_words to already contain intervals; run
+        forced_align_start (or the Refine Boundaries (BND) UI button)
+        first if no BND data exists.
+
+        Args:
+            speaker: Speaker name
+            language: Optional ISO 639-1 code forwarded to faster-whisper.
+                Empty / omitted triggers auto-detect.
+            dryRun: Validate and describe the plan without launching the job
+        """
+        args: Dict[str, Any] = {"speaker": speaker}
+        if language is not None:
+            args["language"] = language
+        if dryRun is not None:
+            args["dryRun"] = dryRun
+        result = tools.execute("retranscribe_with_boundaries_start", args)
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    @mcp.tool()
+    def retranscribe_with_boundaries_status(jobId: str) -> str:
+        """Read status of a boundary-constrained STT compute job.
+
+        Args:
+            jobId: The job ID returned by retranscribe_with_boundaries_start
+        """
+        result = tools.execute(
+            "retranscribe_with_boundaries_status", {"jobId": jobId},
+        )
         return json.dumps(result, indent=2, ensure_ascii=False)
 
     @mcp.tool()
