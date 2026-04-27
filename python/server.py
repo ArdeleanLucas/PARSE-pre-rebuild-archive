@@ -4338,10 +4338,23 @@ def _compute_speaker_ipa(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
         raise RuntimeError("Annotation is not a JSON object")
 
     tiers = annotation.get("tiers") or {}
-    ortho_tier = tiers.get("ortho") or {}
-    ortho_intervals = list(ortho_tier.get("intervals") or [])
+    # Prefer the editable BND lane (`tiers.ortho_words`) when present —
+    # those intervals carry the refined word boundaries from Tier 2 forced
+    # alignment (PR #221) and any subsequent user edits (PR #224), so they
+    # are more authoritative than the coarse Whisper segments in
+    # `tiers.ortho`. Fall back to `tiers.ortho` when ortho_words is empty
+    # or absent.
+    ortho_words_tier = tiers.get("ortho_words") or {}
+    ortho_words_intervals = list(ortho_words_tier.get("intervals") or [])
+    if ortho_words_intervals:
+        ortho_intervals = ortho_words_intervals
+        ortho_source = "ortho_words"
+    else:
+        ortho_tier = tiers.get("ortho") or {}
+        ortho_intervals = list(ortho_tier.get("intervals") or [])
+        ortho_source = "ortho"
     if not ortho_intervals:
-        print("[IPA] no ortho intervals — early return", file=sys.stderr, flush=True)
+        print("[IPA] no ortho/ortho_words intervals — early return", file=sys.stderr, flush=True)
         return {"speaker": speaker, "filled": 0, "skipped": 0, "total": 0, "message": "No ortho intervals."}
 
     ipa_tier = tiers.setdefault("ipa", {"type": "interval", "display_order": 1, "intervals": []})
@@ -4395,10 +4408,18 @@ def _compute_speaker_ipa(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
     _compute_checkpoint("IPA.get_aligner_begin")
     aligner = _get_ipa_aligner()
     _compute_checkpoint("IPA.get_aligner_done")
-    # Use the full Tier 2+3 path when the STT cache has word timestamps;
-    # fall back to coarse ORTH-interval CTC when it doesn't.
-    stt_segments = _read_stt_cache(speaker)
-    has_words = bool(stt_segments and any(seg.get("words") for seg in stt_segments))
+    # When the BND lane (ortho_words) is the source, treat each refined
+    # word interval as its own CTC window — don't re-run forced alignment
+    # from the STT cache, since that would ignore the editable word
+    # boundaries the user sees and edits in the BND lane.
+    # Otherwise, use the full Tier 2+3 path when the STT cache has word
+    # timestamps and fall back to coarse ORTH-interval CTC when it doesn't.
+    if ortho_source == "ortho_words":
+        stt_segments: List[Dict[str, Any]] = []
+        has_words = False
+    else:
+        stt_segments = _read_stt_cache(speaker)
+        has_words = bool(stt_segments and any(seg.get("words") for seg in stt_segments))
 
     exception_samples: List[str] = []
     skipped_empty_ortho = 0
@@ -4442,8 +4463,14 @@ def _compute_speaker_ipa(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
         skipped = skipped_empty_ipa
         total = len(word_results)
     else:
-        print("[IPA] no STT word cache — using coarse ORTH-interval fallback", file=sys.stderr, flush=True)
-        _compute_checkpoint("IPA.loop_begin", n=len(ortho_intervals))
+        print(
+            "[IPA] using {0}-interval CTC ({1} intervals)".format(
+                ortho_source, len(ortho_intervals)
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        _compute_checkpoint("IPA.loop_begin", source=ortho_source, n=len(ortho_intervals))
 
         filled = 0
         skipped = 0
@@ -4544,6 +4571,7 @@ def _compute_speaker_ipa(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]
         "filled": filled,
         "skipped": skipped,
         "total": total,
+        "ortho_source": ortho_source,
         "skip_breakdown": skip_breakdown,
         "exception_samples": exception_samples,
     }
