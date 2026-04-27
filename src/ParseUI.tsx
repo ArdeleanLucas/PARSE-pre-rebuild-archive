@@ -2749,6 +2749,16 @@ export function ParseUI() {
     return count;
   });
 
+  // BND interval count for the active speaker. Drives the "Re-run STT
+  // with Boundaries" button's enable gate — clicking with an empty
+  // tiers.ortho_words is a no-op the backend would reject anyway, so
+  // we hide the foot-gun behind a disabled state + a clear tooltip.
+  const bndIntervalCount = useAnnotationStore((s) => {
+    const speaker = selectedSpeakers[0] ?? null;
+    if (!speaker) return 0;
+    return s.records[speaker]?.tiers?.ortho_words?.intervals?.length ?? 0;
+  });
+
   // Briefly-flashed inline confirmation when the user captures an anchor
   // straight from the playback bar. Vanishes after a couple of seconds so
   // the chrome stays calm.
@@ -4711,9 +4721,17 @@ export function ParseUI() {
                         void bndSttJob.run();
                       }}
                       disabled={
-                        !selectedSpeakers[0] || bndSttJob.state.status === 'running'
+                        !selectedSpeakers[0]
+                        || bndIntervalCount === 0
+                        || bndSttJob.state.status === 'running'
                       }
-                      title="Re-run STT using the BND lane's word boundaries instead of letting Whisper segment from scratch. Useful after manually correcting boundaries."
+                      title={
+                        !selectedSpeakers[0]
+                          ? 'Select a speaker first.'
+                          : bndIntervalCount === 0
+                            ? 'No BND intervals yet for this speaker. Refine boundaries (Refine Boundaries (BND) above) before re-running STT.'
+                            : "Re-transcribe using the current BND boundaries. This respects your manual boundary corrections."
+                      }
                       className="flex w-full items-center gap-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Mic className="h-3.5 w-3.5"/>

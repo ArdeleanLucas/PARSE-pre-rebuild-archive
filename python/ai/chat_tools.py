@@ -57,6 +57,8 @@ DEFAULT_MCP_TOOL_NAMES = (
     "forced_align_status",
     "ipa_transcribe_acoustic_start",
     "ipa_transcribe_acoustic_status",
+    "retranscribe_with_boundaries_start",
+    "retranscribe_with_boundaries_status",
     "detect_timestamp_offset",
     "detect_timestamp_offset_from_pair",
     "apply_timestamp_offset",
@@ -815,6 +817,62 @@ class ParseChatTools:
             "ipa_transcribe_acoustic_status": ChatToolSpec(
                 name="ipa_transcribe_acoustic_status",
                 description="Read status/progress of an existing Tier 3 acoustic IPA job.",
+                parameters={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["jobId"],
+                    "properties": {
+                        "jobId": {"type": "string", "minLength": 1, "maxLength": 128},
+                    },
+                },
+            ),
+            # ── Boundary-constrained STT: re-transcribe using BND ─────
+            "retranscribe_with_boundaries_start": ChatToolSpec(
+                name="retranscribe_with_boundaries_start",
+                description=(
+                    "Start a boundary-constrained STT job for a speaker. "
+                    "Reads the speaker's BND lane (tiers.ortho_words) as "
+                    "authoritative segment boundaries, slices the source "
+                    "audio in memory at each (start, end) window, and runs "
+                    "faster-whisper independently on every slice with "
+                    "word_timestamps=True. Per-segment results are offset "
+                    "back into the global timeline and written to "
+                    "coarse_transcripts/<speaker>.json with a top-level "
+                    "source: \"boundary_constrained\" provenance marker. "
+                    "This is intentionally separate from stt_start — "
+                    "vanilla STT remains independently runnable. Requires "
+                    "tiers.ortho_words to already contain intervals; "
+                    "callers should run forced_align_start (or the "
+                    "Refine Boundaries (BND) UI button) first when no BND "
+                    "data exists. Returns a jobId for polling with "
+                    "retranscribe_with_boundaries_status."
+                ),
+                parameters={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["speaker"],
+                    "properties": {
+                        "speaker": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "language": {
+                            "type": "string",
+                            "minLength": 0,
+                            "maxLength": 8,
+                            "description": (
+                                "Optional ISO 639-1 language code forwarded "
+                                "to faster-whisper. Empty / omitted triggers "
+                                "auto-detect."
+                            ),
+                        },
+                        "dryRun": {"type": "boolean"},
+                    },
+                },
+            ),
+            "retranscribe_with_boundaries_status": ChatToolSpec(
+                name="retranscribe_with_boundaries_status",
+                description=(
+                    "Read status/progress of a boundary-constrained STT "
+                    "job started by retranscribe_with_boundaries_start."
+                ),
                 parameters={
                     "type": "object",
                     "additionalProperties": False,
@@ -2111,6 +2169,7 @@ class ParseChatTools:
             "stt_word_level_start",
             "forced_align_start",
             "ipa_transcribe_acoustic_start",
+            "retranscribe_with_boundaries_start",
             "audio_normalize_start",
         }
         if tool_name in stateful_job_tools:
@@ -2147,11 +2206,22 @@ class ParseChatTools:
                 ),
             )
 
+        if tool_name == "retranscribe_with_boundaries_start":
+            return (
+                _project_loaded_condition(),
+                _tool_condition(
+                    "ortho_words_intervals_present",
+                    "The requested speaker must already have non-empty tiers.ortho_words intervals — boundary-constrained STT slices the audio at those windows and has nothing to do without them.",
+                    kind=TOOL_CONDITION_KIND_PROJECT_STATE,
+                ),
+            )
+
         if tool_name in {
             "stt_status",
             "stt_word_level_status",
             "forced_align_status",
             "ipa_transcribe_acoustic_status",
+            "retranscribe_with_boundaries_status",
             "audio_normalize_status",
             "compute_status",
         }:
@@ -2203,6 +2273,7 @@ class ParseChatTools:
             "stt_word_level_start": "word_level_stt_job_started",
             "forced_align_start": "forced_alignment_job_started",
             "ipa_transcribe_acoustic_start": "acoustic_ipa_job_started",
+            "retranscribe_with_boundaries_start": "boundary_constrained_stt_job_started",
             "audio_normalize_start": "audio_normalize_job_started",
             "pipeline_run": "pipeline_job_started",
         }
@@ -2226,6 +2297,7 @@ class ParseChatTools:
             "enrichments_read",
             "forced_align_status",
             "ipa_transcribe_acoustic_status",
+            "retranscribe_with_boundaries_status",
             "jobs_list_active",
             "lexeme_notes_read",
             "parse_memory_read",
@@ -3037,6 +3109,75 @@ class ParseChatTools:
             args,
             expected_type="ipa_only",
             tier_label="tier3_acoustic_ipa",
+        )
+
+    def _tool_retranscribe_with_boundaries_start(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Start a boundary-constrained STT job (re-transcribe using BND).
+
+        Runs faster-whisper independently on each ``tiers.ortho_words``
+        window, in memory, and writes the merged segments to
+        ``coarse_transcripts/<speaker>.json`` with a top-level
+        ``source: "boundary_constrained"`` marker. Intentionally
+        separate from ``stt_start`` — the standard STT job remains
+        independently runnable and is unaffected by this tool.
+        """
+        speaker = self._normalize_speaker(args.get("speaker"))
+
+        language_raw = args.get("language")
+        language = str(language_raw).strip() if language_raw is not None else ""
+        # Empty string → omit so the backend handler picks up its
+        # auto-detect default. Mirrors the standard STT behaviour.
+
+        payload_body: Dict[str, Any] = {"speaker": speaker}
+        if language:
+            payload_body["language"] = language
+
+        if bool(args.get("dryRun", False)):
+            return {
+                "readOnly": True,
+                "previewOnly": True,
+                "status": "dry_run",
+                "tool": "retranscribe_with_boundaries_start",
+                "plan": payload_body,
+                "note": (
+                    "Dry run. Would launch the retranscribe_with_boundaries "
+                    "compute job, slicing the source audio at every "
+                    "tiers.ortho_words interval and running faster-whisper "
+                    "on each slice in memory. Writes the merged segments to "
+                    "coarse_transcripts/<speaker>.json with "
+                    "source: \"boundary_constrained\". The BND lane itself "
+                    "is never modified."
+                ),
+            }
+
+        if self._start_compute_job is None:
+            raise ChatToolExecutionError(
+                "Compute-job start callback is unavailable — wire ParseChatTools "
+                "with start_compute_job to enable boundary-constrained STT."
+            )
+
+        job_id = self._start_compute_job("retranscribe_with_boundaries", payload_body)
+
+        return {
+            "readOnly": True,
+            "previewOnly": True,
+            "jobId": job_id,
+            "status": "running",
+            "tier": "boundary_constrained_stt",
+            "speaker": speaker,
+            "language": language or None,
+            "message": (
+                "Boundary-constrained STT job started. Poll with "
+                "retranscribe_with_boundaries_status."
+            ),
+        }
+
+    def _tool_retranscribe_with_boundaries_status(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Read status of a boundary-constrained STT compute job."""
+        return self._generic_compute_status(
+            args,
+            expected_type="retranscribe_with_boundaries",
+            tier_label="boundary_constrained_stt",
         )
 
     def _generic_compute_status(
