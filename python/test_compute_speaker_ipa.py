@@ -57,20 +57,31 @@ class _FakeTensor:
         return (self._n,)
 
 
-def _seed_annotation(tmp_path: pathlib.Path, speaker: str, ortho: list, ipa: list):
+def _seed_annotation(
+    tmp_path: pathlib.Path,
+    speaker: str,
+    ortho: list,
+    ipa: list,
+    ortho_words: list = None,
+):
     (tmp_path / "annotations").mkdir(exist_ok=True)
+    tiers = {
+        "ipa":     {"type": "interval", "display_order": 1, "intervals": ipa},
+        "ortho":   {"type": "interval", "display_order": 2, "intervals": ortho},
+        "concept": {"type": "interval", "display_order": 3, "intervals": []},
+        "speaker": {"type": "interval", "display_order": 4, "intervals": []},
+    }
+    if ortho_words is not None:
+        tiers["ortho_words"] = {
+            "type": "interval", "display_order": 5, "intervals": ortho_words,
+        }
     annotation = {
         "version": 1,
         "project_id": "t",
         "speaker": speaker,
         "source_audio": "x.wav",
         "source_audio_duration_sec": 10.0,
-        "tiers": {
-            "ipa":     {"type": "interval", "display_order": 1, "intervals": ipa},
-            "ortho":   {"type": "interval", "display_order": 2, "intervals": ortho},
-            "concept": {"type": "interval", "display_order": 3, "intervals": []},
-            "speaker": {"type": "interval", "display_order": 4, "intervals": []},
-        },
+        "tiers": tiers,
         "metadata": {"language_code": "sdh", "created": "2026-01-01T00:00:00Z", "modified": "2026-01-01T00:00:00Z"},
     }
     (tmp_path / "annotations" / f"{speaker}.parse.json").write_text(
@@ -200,3 +211,106 @@ def test_skips_when_aligner_returns_empty(tmp_path, monkeypatch):
     assert result["filled"] == 0
     assert result["skipped"] == 1
     assert len(aligner.calls) == 1  # audio *was* tried; just produced nothing
+
+
+def test_prefers_ortho_words_over_ortho_when_present(tmp_path, monkeypatch):
+    """When `tiers.ortho_words` (BND) has intervals, IPA must use those
+    refined word-level boundaries instead of the coarse ortho segments,
+    and must not consult the STT cache (which would discard user edits to
+    the BND lane). One CTC call per ortho_words interval, IPA tier rebuilt
+    at word granularity."""
+    aligner = _StubAligner()
+    _install_stubs(monkeypatch, tmp_path, aligner)
+    # If the STT cache were ever consulted, this would steer the run
+    # through the forced-align branch and break the assertions below.
+    monkeypatch.setattr(
+        server, "_read_stt_cache",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("STT cache must not be read when ortho_words is present")
+        ),
+    )
+
+    ortho_segments = [
+        # Single coarse segment covering several words — would yield one
+        # CTC call under the legacy path and produce misaligned IPA.
+        {"start": 1.0, "end": 5.0, "text": "one two three"},
+    ]
+    ortho_words = [
+        {"start": 1.0, "end": 1.4, "text": "one"},
+        {"start": 2.0, "end": 2.5, "text": "two"},
+        {"start": 3.0, "end": 3.6, "text": "three"},
+    ]
+    _seed_annotation(tmp_path, "Fail01", ortho_segments, [], ortho_words=ortho_words)
+
+    result = server._compute_speaker_ipa("j1", {"speaker": "Fail01"})
+    assert result["ortho_source"] == "ortho_words"
+    assert result["filled"] == 3
+    assert result["total"] == 3
+    assert len(aligner.calls) == 3  # one CTC call per refined word
+
+    ann = _load_canonical(tmp_path, "Fail01")
+    ipa_intervals = ann["tiers"]["ipa"]["intervals"]
+    # IPA tier mirrors the BND word boundaries, not the coarse segment.
+    starts = sorted(round(i["start"], 3) for i in ipa_intervals)
+    assert starts == [1.0, 2.0, 3.0]
+
+
+def test_falls_back_to_ortho_when_ortho_words_missing(tmp_path, monkeypatch):
+    """Backward compatibility: speakers from before the BND split still
+    have only `tiers.ortho` and must keep working unchanged."""
+    aligner = _StubAligner()
+    _install_stubs(monkeypatch, tmp_path, aligner)
+    # No STT cache -> coarse ortho fallback (the historical behaviour).
+    monkeypatch.setattr(server, "_read_stt_cache", lambda *_a, **_kw: [])
+
+    ortho = [{"start": 1.0, "end": 1.5, "text": "hair"}]
+    _seed_annotation(tmp_path, "Fail02", ortho, [])  # no ortho_words tier
+
+    result = server._compute_speaker_ipa("j1", {"speaker": "Fail02"})
+    assert result["ortho_source"] == "ortho"
+    assert result["filled"] == 1
+    assert len(aligner.calls) == 1
+
+
+def test_falls_back_to_ortho_when_ortho_words_empty(tmp_path, monkeypatch):
+    """An ortho_words tier that exists but is empty (e.g. forced-align
+    failed) must not block the IPA fill — fall back to coarse ortho."""
+    aligner = _StubAligner()
+    _install_stubs(monkeypatch, tmp_path, aligner)
+    monkeypatch.setattr(server, "_read_stt_cache", lambda *_a, **_kw: [])
+
+    ortho = [{"start": 1.0, "end": 1.5, "text": "hair"}]
+    _seed_annotation(tmp_path, "Fail02", ortho, [], ortho_words=[])
+
+    result = server._compute_speaker_ipa("j1", {"speaker": "Fail02"})
+    assert result["ortho_source"] == "ortho"
+    assert result["filled"] == 1
+
+
+def test_ortho_words_respects_overwrite_false_at_matching_keys(tmp_path, monkeypatch):
+    """Existing IPA at a matching word-level (start, end) key must be
+    preserved when overwrite=False, even when sourced from ortho_words."""
+    aligner = _StubAligner()
+    _install_stubs(monkeypatch, tmp_path, aligner)
+    monkeypatch.setattr(
+        server, "_read_stt_cache",
+        lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("STT cache must not be read when ortho_words is present")
+        ),
+    )
+
+    ortho_words = [
+        {"start": 1.0, "end": 1.4, "text": "one"},
+        {"start": 2.0, "end": 2.5, "text": "two"},
+    ]
+    ipa = [{"start": 1.0, "end": 1.4, "text": "manual-keep"}]
+    _seed_annotation(tmp_path, "Fail01", [], ipa, ortho_words=ortho_words)
+
+    result = server._compute_speaker_ipa("j1", {"speaker": "Fail01"})
+    assert result["ortho_source"] == "ortho_words"
+    assert result["filled"] == 1   # only "two" filled
+    assert result["skipped"] == 1  # "one" preserved
+    ann = _load_canonical(tmp_path, "Fail01")
+    by_start = {round(i["start"], 3): i["text"] for i in ann["tiers"]["ipa"]["intervals"]}
+    assert by_start[1.0] == "manual-keep"
+    assert by_start[2.0] == "IPA_1"
