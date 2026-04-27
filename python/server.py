@@ -1132,19 +1132,36 @@ def _stt_cache_path(speaker: str) -> pathlib.Path:
     return _project_root() / "coarse_transcripts" / "{0}.json".format(speaker)
 
 
-def _write_stt_cache(speaker: str, source_wav: str, language: Optional[str], segments: List[Dict[str, Any]]) -> None:
+def _write_stt_cache(
+    speaker: str,
+    source_wav: str,
+    language: Optional[str],
+    segments: List[Dict[str, Any]],
+    *,
+    source: Optional[str] = None,
+) -> None:
+    """Persist the STT result for a speaker.
+
+    ``source`` is an optional provenance marker written into the cache
+    payload alongside the segments — e.g. ``"boundary_constrained"`` for
+    the BND-anchored re-transcription job. Default ``None`` keeps the
+    legacy schema (no ``source`` key) for the standard STT flow so
+    existing readers stay byte-compatible.
+    """
     speaker_norm = str(speaker or "").strip()
     if not speaker_norm or not isinstance(segments, list) or not segments:
         return
     cache_path = _stt_cache_path(speaker_norm)
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: Dict[str, Any] = {
             "speaker": speaker_norm,
             "source_wav": source_wav,
             "language": language,
             "segments": segments,
         }
+        if source:
+            payload["source"] = source
         with open(cache_path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False)
     except OSError as exc:
@@ -4823,6 +4840,138 @@ def _compute_speaker_boundaries(job_id: str, payload: Dict[str, Any]) -> Dict[st
     }
 
 
+def _compute_speaker_retranscribe_with_boundaries(
+    job_id: str, payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Re-run STT using the user-corrected BND lane as authoritative
+    segment boundaries.
+
+    Reads ``tiers.ortho_words`` from the speaker's annotation, slices the
+    full audio in memory at those exact (start, end) windows, and runs
+    faster-whisper on each slice individually with
+    ``word_timestamps=True``. The model never sees the silences between
+    intervals and never gets to second-guess the user's segmentation —
+    that is the whole point of this job versus the standard STT run.
+
+    Per-slice segments are translated back into the global timeline and
+    written to ``coarse_transcripts/<speaker>.json`` with a top-level
+    ``source: "boundary_constrained"`` marker so downstream readers (and
+    the UI badge) can distinguish this output from a vanilla STT run.
+    The BND lane itself is never modified — boundary-constrained STT is
+    a re-transcription, not a re-segmentation.
+
+    Payload: ``{ "speaker": "Fail02", "language": "ku" }``. ``language``
+    is optional; ``None``/empty triggers faster-whisper auto-detect.
+    """
+    speaker = _normalize_speaker_id(payload.get("speaker"))
+    language_raw = payload.get("language")
+    language = str(language_raw).strip() if language_raw is not None else None
+    if not language:
+        language = None
+    print(
+        "[BND-STT] enter speaker={0} language={1!r}".format(speaker, language),
+        file=sys.stderr,
+        flush=True,
+    )
+
+    canonical_path = _project_root() / _annotation_record_relative_path(speaker)
+    legacy_path = _project_root() / _annotation_legacy_record_relative_path(speaker)
+    if canonical_path.is_file():
+        annotation_path = canonical_path
+    elif legacy_path.is_file():
+        annotation_path = legacy_path
+    else:
+        raise RuntimeError("No annotation found for speaker {0!r}".format(speaker))
+
+    annotation = _read_json_file(annotation_path, {})
+    if not isinstance(annotation, dict):
+        raise RuntimeError("Annotation is not a JSON object")
+
+    tiers = annotation.get("tiers") or {}
+    ortho_words_tier = tiers.get("ortho_words") if isinstance(tiers.get("ortho_words"), dict) else None
+    raw_intervals = list((ortho_words_tier or {}).get("intervals") or [])
+
+    intervals: List[Tuple[float, float]] = []
+    for iv in raw_intervals:
+        if not isinstance(iv, dict):
+            continue
+        try:
+            start_sec = float(iv.get("start", 0.0) or 0.0)
+            end_sec = float(iv.get("end", start_sec) or start_sec)
+        except (TypeError, ValueError):
+            continue
+        if end_sec <= start_sec:
+            continue
+        intervals.append((start_sec, end_sec))
+
+    if not intervals:
+        raise RuntimeError(
+            "No BND intervals available for {0!r}. Refine boundaries first "
+            "before re-running STT with boundary constraints.".format(speaker)
+        )
+
+    intervals.sort(key=lambda iv: (iv[0], iv[1]))
+
+    _set_job_progress(job_id, 5.0, message="Resolving audio")
+    audio_path = _pipeline_audio_path_for_speaker(speaker)
+
+    _set_job_progress(job_id, 10.0, message="Loading audio")
+    from ai.forced_align import _load_audio_mono_16k
+    audio_tensor = _load_audio_mono_16k(audio_path)
+
+    _set_job_progress(job_id, 15.0, message="Loading STT provider")
+    provider = get_stt_provider()
+    if not hasattr(provider, "transcribe_segments_in_memory"):
+        raise RuntimeError(
+            "Boundary-constrained STT requires a provider that supports "
+            "in-memory segment transcription (LocalWhisperProvider). The "
+            "active provider {0!r} does not.".format(type(provider).__name__)
+        )
+
+    n_intervals = len(intervals)
+
+    def _on_progress(pct: float, n_done: int) -> None:
+        # Map provider 0-100 to our 15-95 band so the leading "loading"
+        # phase isn't lost.
+        scaled = 15.0 + max(0.0, min(100.0, pct)) * 0.80
+        _set_job_progress(
+            job_id, scaled,
+            message="Re-transcribing {0}/{1}".format(n_done, n_intervals),
+        )
+
+    segments = provider.transcribe_segments_in_memory(
+        audio_tensor,
+        intervals,
+        language=language,
+        progress_callback=_on_progress,
+    )
+
+    _set_job_progress(job_id, 96.0, message="Writing STT cache")
+    _write_stt_cache(
+        speaker,
+        str(audio_path),
+        language,
+        segments,
+        source="boundary_constrained",
+    )
+
+    print(
+        "[BND-STT] speaker={0} intervals={1} segments={2}".format(
+            speaker, n_intervals, len(segments),
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+    return {
+        "speaker": speaker,
+        "language": language,
+        "boundary_intervals": n_intervals,
+        "segments_written": len(segments),
+        "source": "boundary_constrained",
+    }
+
+
 def _pipeline_audio_path_for_speaker(speaker: str) -> pathlib.Path:
     """Resolve the best audio file to feed a Whisper-family model for a speaker.
 
@@ -6152,6 +6301,14 @@ def _run_compute_job(job_id: str, compute_type: str, payload: Dict[str, Any]) ->
             result = _compute_training_job(job_id, payload)
         elif normalized_type == "stt":
             result = _compute_stt(job_id, payload)
+        elif normalized_type in {
+            "retranscribe_with_boundaries",
+            "retranscribe-with-boundaries",
+            "boundary_constrained_stt",
+            "boundary-constrained-stt",
+            "bnd_stt",
+        }:
+            result = _compute_speaker_retranscribe_with_boundaries(job_id, payload)
         elif normalized_type in {"offset_detect", "offset-detect"}:
             result = _compute_offset_detect(job_id, payload)
         elif normalized_type in {"offset_detect_from_pair", "offset-detect-from-pair"}:

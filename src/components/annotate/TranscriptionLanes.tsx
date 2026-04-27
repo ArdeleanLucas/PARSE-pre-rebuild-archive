@@ -50,6 +50,16 @@ interface LaneStrip {
   status?: "idle" | "loading" | "loaded" | "error";
   /** Custom empty-state message; falls back to a generic per-tier hint. */
   emptyHint?: string;
+  /** Provenance tag rendered next to the lane label (e.g. ``"BND"`` for
+   * STT cached by the boundary-constrained re-transcription job). The
+   * STT lane sets this when ``sttSourceBySpeaker[speaker] ===
+   * "boundary_constrained"`` so the user can tell at a glance whether
+   * the visible STT respects their BND edits or came from vanilla
+   * Whisper. */
+  sourceBadge?: string;
+  /** Tooltip explaining the source badge, used as the label cell's
+   * ``title`` attribute when ``sourceBadge`` is set. */
+  sourceBadgeTitle?: string;
 }
 
 // Lane order is hard-coded top-to-bottom and intentionally independent of
@@ -139,6 +149,7 @@ export function TranscriptionLanes({
   const lanes = useTranscriptionLanesStore((s) => s.lanes);
   const sttBySpeaker = useTranscriptionLanesStore((s) => s.sttBySpeaker);
   const sttStatus = useTranscriptionLanesStore((s) => s.sttStatus);
+  const sttSourceBySpeaker = useTranscriptionLanesStore((s) => s.sttSourceBySpeaker);
   const ensureStt = useTranscriptionLanesStore((s) => s.ensureStt);
   const selectedInterval = useTranscriptionLanesStore((s) => s.selectedInterval);
   const setSelectedInterval = useTranscriptionLanesStore((s) => s.setSelectedInterval);
@@ -434,6 +445,12 @@ export function TranscriptionLanes({
       // for legacy records that haven't been touched since the new tier
       // landed. Edits create the tier entry and from then on it wins.
       if (kind === "stt") {
+        const sttSource = sttSourceBySpeaker[speaker];
+        const isBoundaryConstrained = sttSource === "boundary_constrained";
+        const sourceBadge = isBoundaryConstrained ? "BND" : undefined;
+        const sourceBadgeTitle = isBoundaryConstrained
+          ? "STT was re-transcribed using your BND boundaries (boundary-constrained mode)."
+          : undefined;
         const tierIvs: AnnotationInterval[] = record?.tiers?.stt?.intervals ?? [];
         const hasTierStt = tierIvs.length > 0;
         if (hasTierStt) {
@@ -450,6 +467,8 @@ export function TranscriptionLanes({
             label: LANE_LABELS.stt,
             intervals: filtered,
             sourceIndices,
+            sourceBadge,
+            sourceBadgeTitle,
           });
         } else {
           // Pre-migration: STT sourced from the API cache. Emit identity
@@ -467,6 +486,8 @@ export function TranscriptionLanes({
             needsMigration: true,
             migrate: () => ensureSttTier(speaker, segs),
             status: sttStatus[speaker] ?? "idle",
+            sourceBadge,
+            sourceBadgeTitle,
           });
         }
         continue;
@@ -489,7 +510,7 @@ export function TranscriptionLanes({
       });
     }
     return out;
-  }, [lanes, sttBySpeaker, sttStatus, record, speaker]);
+  }, [lanes, sttBySpeaker, sttStatus, sttSourceBySpeaker, record, speaker]);
 
   const stripByKind = useCallback(
     (kind: LaneKind): LaneStrip | undefined => strips.find((s) => s.kind === kind),
@@ -597,11 +618,20 @@ export function TranscriptionLanes({
         return (
           <div key={strip.kind} className="relative flex items-stretch">
             <div
-              className="flex shrink-0 items-center justify-center border-r border-slate-100 text-[9px] font-semibold uppercase tracking-wider"
+              data-testid={`lane-label-${strip.kind}`}
+              className="flex shrink-0 flex-col items-center justify-center border-r border-slate-100 text-[9px] font-semibold uppercase tracking-wider"
               style={{ width: LABEL_COL_PX, color }}
-              title={`${strip.label} lane`}
+              title={strip.sourceBadgeTitle ?? `${strip.label} lane`}
             >
-              {strip.label}
+              <span>{strip.label}</span>
+              {strip.sourceBadge && (
+                <span
+                  data-testid={`lane-source-badge-${strip.kind}`}
+                  className="mt-0.5 rounded bg-amber-100 px-1 text-[7px] font-bold tracking-wider text-amber-800 ring-1 ring-amber-300"
+                >
+                  {strip.sourceBadge}
+                </span>
+              )}
             </div>
             <div className="relative flex-1 overflow-hidden" style={{ height: LANE_HEIGHT_PX }}>
               <div
