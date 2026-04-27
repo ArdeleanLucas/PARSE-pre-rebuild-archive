@@ -2,6 +2,7 @@
 import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { AnnotationRecord, AnnotationInterval, ProjectConfig, Tag } from "./api/types";
+import { useTranscriptionLanesStore } from "./stores/transcriptionLanesStore";
 
 const { mockGetAuthStatus, mockPollAuth, mockStartAuthFlow } = vi.hoisted(() => ({
   mockGetAuthStatus: vi.fn(),
@@ -967,6 +968,81 @@ describe("Actions menu — transcription run flow", () => {
     const button = await screen.findByTestId("phonetic-retranscribe-with-boundaries");
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(button.getAttribute("title") ?? "").toMatch(/refine boundaries/i);
+  });
+
+  // ── Refine Boundaries (BND) button gating on STT word timestamps ───────
+  // The standalone BND job uses the speaker's cached STT word timestamps
+  // as forced-alignment seeds. Without them the backend raises
+  // "Run STT first" — these tests confirm we surface that disabled state
+  // in the UI instead of letting the user click into a guaranteed error.
+
+  it("disables Refine Boundaries (BND) when the active speaker has no STT word timestamps", async () => {
+    mockConfig = {
+      project_name: "PARSE",
+      language_code: "ku",
+      speakers: ["Fail01"],
+      concepts: [{ id: "1", label: "water" }],
+      audio_dir: "audio",
+      annotations_dir: "annotations",
+    };
+    mockRecords = {
+      Fail01: makeRecord("Fail01", [
+        { conceptText: "water", ipa: "aw", ortho: "ئاو", start: 1, end: 2 },
+      ]),
+    };
+    // Reset the lanes store so the previous test's STT data doesn't leak.
+    useTranscriptionLanesStore.setState({
+      sttBySpeaker: {},
+      sttStatus: {},
+      sttSourceBySpeaker: {},
+    });
+
+    render(<ParseUI />);
+    await switchToAnnotateMode();
+
+    const button = await screen.findByTestId("phonetic-refine-boundaries");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(button.getAttribute("title") ?? "").toMatch(/run stt first/i);
+  });
+
+  it("enables Refine Boundaries (BND) when the speaker's STT cache has word timestamps", async () => {
+    mockConfig = {
+      project_name: "PARSE",
+      language_code: "ku",
+      speakers: ["Fail01"],
+      concepts: [{ id: "1", label: "water" }],
+      audio_dir: "audio",
+      annotations_dir: "annotations",
+    };
+    mockRecords = {
+      Fail01: makeRecord("Fail01", [
+        { conceptText: "water", ipa: "aw", ortho: "ئاو", start: 1, end: 2 },
+      ]),
+    };
+    // Seed an STT segment with word-level timestamps. ``status: "loaded"``
+    // keeps ensureStt from racing in and overwriting our seed during the
+    // first lane render.
+    useTranscriptionLanesStore.setState({
+      sttBySpeaker: {
+        Fail01: [
+          {
+            start: 1.0,
+            end: 2.0,
+            text: "ئاو",
+            words: [{ word: "ئاو", start: 1.05, end: 1.85, prob: 0.92 }],
+          },
+        ],
+      },
+      sttStatus: { Fail01: "loaded" },
+      sttSourceBySpeaker: {},
+    });
+
+    render(<ParseUI />);
+    await switchToAnnotateMode();
+
+    const button = await screen.findByTestId("phonetic-refine-boundaries");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(button.getAttribute("title") ?? "").toMatch(/run fast boundary refinement/i);
   });
 
   it("enables Re-run STT with Boundaries when the active speaker has ortho_words intervals", async () => {

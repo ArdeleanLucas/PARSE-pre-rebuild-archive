@@ -55,6 +55,8 @@ DEFAULT_MCP_TOOL_NAMES = (
     "stt_word_level_status",
     "forced_align_start",
     "forced_align_status",
+    "compute_boundaries_start",
+    "compute_boundaries_status",
     "ipa_transcribe_acoustic_start",
     "ipa_transcribe_acoustic_status",
     "retranscribe_with_boundaries_start",
@@ -778,6 +780,68 @@ class ParseChatTools:
             "forced_align_status": ChatToolSpec(
                 name="forced_align_status",
                 description="Read status/progress of an existing Tier 2 forced-alignment job.",
+                parameters={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["jobId"],
+                    "properties": {
+                        "jobId": {"type": "string", "minLength": 1, "maxLength": 128},
+                    },
+                },
+            ),
+            # ── Standalone BND refresh: forced-align → tiers.ortho_words ──
+            "compute_boundaries_start": ChatToolSpec(
+                name="compute_boundaries_start",
+                description=(
+                    "Start a standalone BND (Boundaries) job for a "
+                    "speaker. Runs Tier 2 forced alignment "
+                    "(torchaudio.functional.forced_align against "
+                    "facebook/wav2vec2-xlsr-53-espeak-cv-ft) on the "
+                    "speaker's cached STT word timestamps and writes the "
+                    "refined word boundaries to tiers.ortho_words — no "
+                    "Whisper rerun, no IPA. This is the fast lane for "
+                    "iterating on word boundaries before paying for the "
+                    "slow ORTH/IPA passes; it is intentionally separate "
+                    "from forced_align_start (which writes a *.aligned.json "
+                    "artifact instead of the BND tier) and from "
+                    "retranscribe_with_boundaries_start (which feeds BND "
+                    "back into faster-whisper). "
+                    "Existing tiers.ortho_words intervals flagged "
+                    "manuallyAdjusted=True are preserved verbatim and "
+                    "anchor their slice of the timeline; aligned words "
+                    "overlapping a manual interval are dropped. Pass "
+                    "overwrite=true to discard manual edits as well. "
+                    "Requires the speaker's STT cache "
+                    "(coarse_transcripts/<speaker>.json) to already carry "
+                    "word-level timestamps — run stt_word_level_start "
+                    "first if it doesn't. Returns a jobId for polling "
+                    "with compute_boundaries_status."
+                ),
+                parameters={
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["speaker"],
+                    "properties": {
+                        "speaker": {"type": "string", "minLength": 1, "maxLength": 200},
+                        "overwrite": {
+                            "type": "boolean",
+                            "description": (
+                                "When true, discards even manuallyAdjusted "
+                                "intervals on tiers.ortho_words and rebuilds "
+                                "the lane fully from forced alignment "
+                                "(default: false)."
+                            ),
+                        },
+                        "dryRun": {"type": "boolean"},
+                    },
+                },
+            ),
+            "compute_boundaries_status": ChatToolSpec(
+                name="compute_boundaries_status",
+                description=(
+                    "Read status/progress of a standalone BND job started "
+                    "by compute_boundaries_start."
+                ),
                 parameters={
                     "type": "object",
                     "additionalProperties": False,
@@ -2168,6 +2232,7 @@ class ParseChatTools:
             "stt_start",
             "stt_word_level_start",
             "forced_align_start",
+            "compute_boundaries_start",
             "ipa_transcribe_acoustic_start",
             "retranscribe_with_boundaries_start",
             "audio_normalize_start",
@@ -2206,6 +2271,16 @@ class ParseChatTools:
                 ),
             )
 
+        if tool_name == "compute_boundaries_start":
+            return (
+                _project_loaded_condition(),
+                _tool_condition(
+                    "stt_word_timestamps_cached",
+                    "The requested speaker must already have a coarse_transcripts/<speaker>.json STT cache containing segment-level word timestamps — forced alignment uses those words as seeds. Run stt_word_level_start first if absent.",
+                    kind=TOOL_CONDITION_KIND_FILE_PRESENCE,
+                ),
+            )
+
         if tool_name == "retranscribe_with_boundaries_start":
             return (
                 _project_loaded_condition(),
@@ -2220,6 +2295,7 @@ class ParseChatTools:
             "stt_status",
             "stt_word_level_status",
             "forced_align_status",
+            "compute_boundaries_status",
             "ipa_transcribe_acoustic_status",
             "retranscribe_with_boundaries_status",
             "audio_normalize_status",
@@ -2272,6 +2348,7 @@ class ParseChatTools:
             "stt_start": "stt_job_started",
             "stt_word_level_start": "word_level_stt_job_started",
             "forced_align_start": "forced_alignment_job_started",
+            "compute_boundaries_start": "boundaries_job_started",
             "ipa_transcribe_acoustic_start": "acoustic_ipa_job_started",
             "retranscribe_with_boundaries_start": "boundary_constrained_stt_job_started",
             "audio_normalize_start": "audio_normalize_job_started",
@@ -2296,6 +2373,7 @@ class ParseChatTools:
             "detect_timestamp_offset_from_pair",
             "enrichments_read",
             "forced_align_status",
+            "compute_boundaries_status",
             "ipa_transcribe_acoustic_status",
             "retranscribe_with_boundaries_status",
             "jobs_list_active",
@@ -3055,6 +3133,71 @@ class ParseChatTools:
             args,
             expected_type="forced_align",
             tier_label="tier2_forced_align",
+        )
+
+    def _tool_compute_boundaries_start(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Start a standalone BND (Boundaries) compute job.
+
+        Routes through the canonical ``boundaries`` compute_type so the
+        backend picks the ``_compute_speaker_boundaries`` handler that
+        writes ``tiers.ortho_words``. Intentionally distinct from
+        ``forced_align_start`` (which writes a ``*.aligned.json``
+        artifact instead) and from ``retranscribe_with_boundaries_start``
+        (which feeds BND back into faster-whisper).
+        """
+        speaker = self._normalize_speaker(args.get("speaker"))
+        overwrite = bool(args.get("overwrite", False))
+
+        payload_body: Dict[str, Any] = {
+            "speaker": speaker,
+            "overwrite": overwrite,
+        }
+
+        if bool(args.get("dryRun", False)):
+            return {
+                "readOnly": True,
+                "previewOnly": True,
+                "status": "dry_run",
+                "tool": "compute_boundaries_start",
+                "plan": payload_body,
+                "note": (
+                    "Dry run. Would launch the boundaries compute job, "
+                    "running torchaudio.functional.forced_align against "
+                    "facebook/wav2vec2-xlsr-53-espeak-cv-ft on the "
+                    "speaker's cached STT word timestamps and writing the "
+                    "refined word boundaries to tiers.ortho_words. No "
+                    "Whisper rerun, no IPA. Existing manuallyAdjusted "
+                    "intervals are preserved unless overwrite=true."
+                ),
+            }
+
+        if self._start_compute_job is None:
+            raise ChatToolExecutionError(
+                "Compute-job start callback is unavailable — wire ParseChatTools "
+                "with start_compute_job to enable standalone BND."
+            )
+
+        job_id = self._start_compute_job("boundaries", payload_body)
+
+        return {
+            "readOnly": True,
+            "previewOnly": True,
+            "jobId": job_id,
+            "status": "running",
+            "tier": "tier2_boundaries_only",
+            "speaker": speaker,
+            "overwrite": overwrite,
+            "message": (
+                "Boundaries job started. Poll with compute_boundaries_status."
+            ),
+        }
+
+    def _tool_compute_boundaries_status(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Read status of a standalone BND compute job."""
+        return self._generic_compute_status(
+            args,
+            expected_type="boundaries",
+            tier_label="tier2_boundaries_only",
         )
 
     def _tool_ipa_transcribe_acoustic_start(self, args: Dict[str, Any]) -> Dict[str, Any]:
