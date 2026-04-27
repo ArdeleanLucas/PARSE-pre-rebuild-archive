@@ -15,6 +15,7 @@ Tools exposed:
     stt_start, stt_status, pipeline_run, compute_status,
     stt_word_level_start, stt_word_level_status,
     forced_align_start, forced_align_status,
+    compute_boundaries_start, compute_boundaries_status,
     ipa_transcribe_acoustic_start, ipa_transcribe_acoustic_status,
     retranscribe_with_boundaries_start, retranscribe_with_boundaries_status
   Offset alignment:
@@ -1196,6 +1197,57 @@ def create_mcp_server(project_root: Optional[str] = None) -> "FastMCP":
             jobId: The job ID returned by forced_align_start
         """
         result = tools.execute("forced_align_status", {"jobId": jobId})
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    @mcp.tool()
+    def compute_boundaries_start(
+        speaker: str,
+        overwrite: Optional[bool] = None,
+        dryRun: Optional[bool] = None,
+    ) -> str:
+        """Start a standalone BND (Boundaries) job for a speaker.
+
+        Runs Tier 2 forced alignment
+        (torchaudio.functional.forced_align against
+        facebook/wav2vec2-xlsr-53-espeak-cv-ft) on the speaker's cached
+        STT word timestamps and writes the refined word boundaries to
+        tiers.ortho_words. No Whisper rerun, no IPA — this is the fast
+        lane for iterating on word boundaries before paying for the
+        slow ORTH/IPA passes.
+
+        Distinct from forced_align_start (which writes a *.aligned.json
+        artifact instead of the BND tier) and from
+        retranscribe_with_boundaries_start (which feeds BND back into
+        faster-whisper). Existing tiers.ortho_words intervals flagged
+        manuallyAdjusted=True are preserved verbatim and anchor their
+        slice of the timeline; aligned words overlapping a manual
+        interval are dropped. Pass overwrite=true to discard manual
+        edits as well. Requires the speaker's STT cache to already
+        carry word-level timestamps — run stt_word_level_start first
+        if it doesn't.
+
+        Args:
+            speaker: Speaker name
+            overwrite: When true, discards manuallyAdjusted intervals
+                and rebuilds tiers.ortho_words fully (default: false)
+            dryRun: Validate and describe the plan without launching the job
+        """
+        args: Dict[str, Any] = {"speaker": speaker}
+        if overwrite is not None:
+            args["overwrite"] = overwrite
+        if dryRun is not None:
+            args["dryRun"] = dryRun
+        result = tools.execute("compute_boundaries_start", args)
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    @mcp.tool()
+    def compute_boundaries_status(jobId: str) -> str:
+        """Read status of a standalone BND compute job.
+
+        Args:
+            jobId: The job ID returned by compute_boundaries_start
+        """
+        result = tools.execute("compute_boundaries_status", {"jobId": jobId})
         return json.dumps(result, indent=2, ensure_ascii=False)
 
     @mcp.tool()

@@ -2759,6 +2759,18 @@ export function ParseUI() {
     return s.records[speaker]?.tiers?.ortho_words?.intervals?.length ?? 0;
   });
 
+  // Whether the active speaker has cached STT segments carrying nested
+  // word-level timestamps. The standalone BND ("Refine Boundaries") job
+  // uses those words as alignment seeds — without them the backend
+  // raises "Run STT first…", which we'd rather pre-empt with a disabled
+  // button + a tooltip pointing at the STT action.
+  const sttHasWordTimestamps = useTranscriptionLanesStore((s) => {
+    const speaker = selectedSpeakers[0] ?? null;
+    if (!speaker) return false;
+    const segs = s.sttBySpeaker[speaker] ?? [];
+    return segs.some((seg) => Array.isArray(seg.words) && seg.words.length > 0);
+  });
+
   // Briefly-flashed inline confirmation when the user captures an anchor
   // straight from the playback bar. Vanishes after a couple of seconds so
   // the chrome stays calm.
@@ -4666,9 +4678,17 @@ export function ParseUI() {
                         void boundariesJob.run();
                       }}
                       disabled={
-                        !selectedSpeakers[0] || boundariesJob.state.status === 'running'
+                        !selectedSpeakers[0]
+                        || !sttHasWordTimestamps
+                        || boundariesJob.state.status === 'running'
                       }
-                      title="Run fast boundary refinement independently. Useful before running slow ORTH/IPA models."
+                      title={
+                        !selectedSpeakers[0]
+                          ? 'Select a speaker first.'
+                          : !sttHasWordTimestamps
+                            ? 'No STT word timestamps for this speaker yet. Run STT first (Actions → Run STT) — boundary refinement uses those words as alignment seeds.'
+                            : 'Run fast boundary refinement independently. Useful before running slow ORTH/IPA models.'
+                      }
                       className="flex w-full items-center gap-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Scissors className="h-3.5 w-3.5"/>
