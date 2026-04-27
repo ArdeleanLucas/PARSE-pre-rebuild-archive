@@ -4660,6 +4660,141 @@ def _compute_speaker_forced_align(job_id: str, payload: Dict[str, Any]) -> Dict[
     }
 
 
+def _compute_speaker_boundaries(job_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Standalone BND job — refresh ``tiers.ortho_words`` only.
+
+    Runs Tier 2 forced alignment (``ai.forced_align.align_segments`` via
+    ``_ortho_tier2_align_to_words``) on the speaker's cached STT segments
+    and writes the refined word boundaries to ``tiers.ortho_words``. No
+    Whisper, no IPA — this is the fast lane users can re-run repeatedly
+    while iterating on boundaries before paying for slow ORTH/IPA passes.
+
+    Intervals previously flagged ``manuallyAdjusted=True`` are preserved
+    verbatim — model output never overwrites a user edit. Aligned words
+    that overlap a manual interval are dropped, so manual edits anchor
+    their slice of the timeline. Pass ``overwrite=True`` to discard
+    manual edits as well.
+
+    All freshly generated intervals carry ``manuallyAdjusted=False`` so
+    downstream code (offset shift, IPA preference) can branch on the
+    flag without ambiguity.
+
+    Payload: ``{ "speaker": "Fail02", "overwrite": false }``.
+    """
+    speaker = _normalize_speaker_id(payload.get("speaker"))
+    overwrite = bool(payload.get("overwrite", False))
+    print(
+        "[BND] enter speaker={0} overwrite={1}".format(speaker, overwrite),
+        file=sys.stderr,
+        flush=True,
+    )
+
+    canonical_path = _project_root() / _annotation_record_relative_path(speaker)
+    legacy_path = _project_root() / _annotation_legacy_record_relative_path(speaker)
+    if canonical_path.is_file():
+        annotation_path = canonical_path
+    elif legacy_path.is_file():
+        annotation_path = legacy_path
+    else:
+        raise RuntimeError("No annotation found for speaker {0!r}".format(speaker))
+
+    annotation = _read_json_file(annotation_path, {})
+    if not isinstance(annotation, dict):
+        raise RuntimeError("Annotation is not a JSON object")
+
+    tiers = annotation.get("tiers") or {}
+
+    # Tier 1 STT segments + nested Whisper word timestamps are the seed
+    # for forced alignment. Without them we can't refine anything.
+    _set_job_progress(job_id, 5.0, message="Reading STT cache")
+    stt_segments = _read_stt_cache(speaker) or []
+    has_words = bool(stt_segments and any(seg.get("words") for seg in stt_segments))
+    if not has_words:
+        raise RuntimeError(
+            "No STT word-level timestamps cached for {0!r}. Run STT first "
+            "before refining boundaries.".format(speaker)
+        )
+
+    # Existing ortho_words: split into manual edits (preserved) and the
+    # rest (regenerated). When overwrite=True, even manual edits are
+    # discarded so the alignment is fully fresh.
+    existing_tier_raw = tiers.get("ortho_words")
+    existing_tier = existing_tier_raw if isinstance(existing_tier_raw, dict) else None
+    existing_intervals = list((existing_tier or {}).get("intervals") or [])
+    if overwrite:
+        manual_intervals: List[Dict[str, Any]] = []
+    else:
+        manual_intervals = [
+            iv for iv in existing_intervals
+            if isinstance(iv, dict) and bool(iv.get("manuallyAdjusted"))
+        ]
+
+    _set_job_progress(job_id, 15.0, message="Resolving audio")
+    audio_path = _pipeline_audio_path_for_speaker(speaker)
+
+    _set_job_progress(job_id, 30.0, message="Running forced alignment")
+    aligned_words = _ortho_tier2_align_to_words(audio_path, stt_segments)
+
+    def _overlaps(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+        try:
+            a_start = float(a.get("start", 0.0) or 0.0)
+            a_end = float(a.get("end", a_start) or a_start)
+            b_start = float(b.get("start", 0.0) or 0.0)
+            b_end = float(b.get("end", b_start) or b_start)
+        except (TypeError, ValueError):
+            return False
+        return a_start < b_end and a_end > b_start
+
+    if manual_intervals:
+        aligned_words = [
+            w for w in aligned_words
+            if not any(_overlaps(w, m) for m in manual_intervals)
+        ]
+
+    # Mark every model-generated interval as not-manually-adjusted so the
+    # flag is unambiguous on disk (matches the PR-197 normalization
+    # contract for the editable lanes).
+    for w in aligned_words:
+        w["manuallyAdjusted"] = False
+
+    combined = sorted(
+        manual_intervals + aligned_words,
+        key=lambda iv: (
+            float(iv.get("start", 0.0) or 0.0),
+            float(iv.get("end", 0.0) or 0.0),
+        ),
+    )
+
+    _set_job_progress(job_id, 90.0, message="Writing tiers.ortho_words")
+    if existing_tier is None:
+        existing_tier = {"type": "interval", "display_order": 4, "intervals": []}
+    existing_tier["intervals"] = combined
+    tiers["ortho_words"] = existing_tier
+    annotation["tiers"] = tiers
+    _annotation_touch_metadata(annotation, preserve_created=True)
+
+    _write_json_file(annotation_path, annotation)
+    if canonical_path != annotation_path and canonical_path.is_file():
+        _write_json_file(canonical_path, annotation)
+    if legacy_path != annotation_path and legacy_path.is_file():
+        _write_json_file(legacy_path, annotation)
+
+    print(
+        "[BND] speaker={0} generated={1} preserved_manual={2} total={3}".format(
+            speaker, len(aligned_words), len(manual_intervals), len(combined),
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+
+    return {
+        "speaker": speaker,
+        "generated": len(aligned_words),
+        "preserved_manual": len(manual_intervals),
+        "total": len(combined),
+    }
+
+
 def _pipeline_audio_path_for_speaker(speaker: str) -> pathlib.Path:
     """Resolve the best audio file to feed a Whisper-family model for a speaker.
 
@@ -5981,6 +6116,8 @@ def _run_compute_job(job_id: str, compute_type: str, payload: Dict[str, Any]) ->
             result = _compute_speaker_ortho(job_id, payload)
         elif normalized_type in {"forced_align", "forced-align", "align"}:
             result = _compute_speaker_forced_align(job_id, payload)
+        elif normalized_type in {"boundaries", "bnd", "ortho_words", "ortho-words"}:
+            result = _compute_speaker_boundaries(job_id, payload)
         elif normalized_type in {"full_pipeline", "full-pipeline", "pipeline"}:
             result = _compute_full_pipeline(job_id, payload)
         elif normalized_type in {"train_ipa_model", "train-ipa-model", "train_ipa"}:

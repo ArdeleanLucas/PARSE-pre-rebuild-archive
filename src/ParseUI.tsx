@@ -2150,6 +2150,27 @@ export function ParseUI() {
   const [speakerPicker, setSpeakerPicker] = useState<string | null>(null);
   const [computeMode, setComputeMode] = useState('cognates');
   const { start: startComputeJob, state: computeJobState, reset: resetComputeJob } = useComputeJob(computeMode);
+  // Standalone BND job — Tier 2 forced alignment only, no Whisper/IPA.
+  // Lives outside `useComputeJob` because it needs to forward the active
+  // speaker in the request body and reload that speaker's annotation on
+  // completion so the Boundaries lane re-renders without a manual refresh.
+  const [boundariesSpeaker, setBoundariesSpeaker] = useState<string | null>(null);
+  const boundariesJob = useActionJob({
+    start: () => {
+      if (!boundariesSpeaker) {
+        return Promise.reject(new Error('Pick a speaker before refining boundaries.'));
+      }
+      return startCompute('boundaries', { speaker: boundariesSpeaker });
+    },
+    poll: (jobId) => pollCompute('boundaries', jobId),
+    label: 'Refining word boundaries…',
+    onComplete: async () => {
+      if (boundariesSpeaker) {
+        await useAnnotationStore.getState().loadSpeaker(boundariesSpeaker);
+      }
+    },
+    autoDismissMs: 4000,
+  });
   const [clefModalOpen, setClefModalOpen] = useState(false);
   // Sources Report modal — shows provider attribution for every populated
   // reference form. Opened from the Compute panel's CLEF status row; read-
@@ -4581,6 +4602,64 @@ export function ParseUI() {
                   )}
 
                   <TranscriptionLanesControls/>
+
+                  {/* --- BND (Boundaries) standalone refresh ------------- */}
+                  {/* Forced-align only: fast, no Whisper/IPA. Run this to
+                       check and hand-correct boundaries before paying for
+                       the slow ORTH/IPA passes. Existing manuallyAdjusted
+                       intervals on the BND lane are preserved by the
+                       backend; aligned words overlapping them are dropped. */}
+                  <div className="mb-2">
+                    <button
+                      data-testid="phonetic-refine-boundaries"
+                      onClick={() => {
+                        const speaker = selectedSpeakers[0] ?? null;
+                        if (!speaker) return;
+                        setBoundariesSpeaker(speaker);
+                        // useActionJob.run() reads boundariesSpeaker on the
+                        // next render via the start() closure; the state
+                        // setter above runs synchronously before run() since
+                        // React batches inside the click handler.
+                        void boundariesJob.run();
+                      }}
+                      disabled={
+                        !selectedSpeakers[0] || boundariesJob.state.status === 'running'
+                      }
+                      title="Run fast boundary refinement independently. Useful before running slow ORTH/IPA models."
+                      className="flex w-full items-center gap-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Scissors className="h-3.5 w-3.5"/>
+                      <span className="flex-1 text-left">
+                        {boundariesJob.state.status === 'running'
+                          ? 'Refining boundaries…'
+                          : 'Refine Boundaries (BND)'}
+                      </span>
+                      {boundariesJob.state.status === 'running' && (
+                        <span className="rounded bg-white/70 px-1 font-mono text-[9px] text-amber-700">
+                          {Math.round(boundariesJob.state.progress * 100)}%
+                        </span>
+                      )}
+                    </button>
+                    {boundariesJob.state.status === 'running'
+                      && boundariesJob.state.etaMs !== null
+                      && boundariesJob.state.etaMs > 0 && (
+                      <div className="mt-1 text-[10px] text-amber-700">
+                        ~{formatEta(boundariesJob.state.etaMs)} left
+                      </div>
+                    )}
+                    {boundariesJob.state.status === 'complete' && (
+                      <div className="mt-1 text-[10px] text-emerald-700">
+                        Boundaries refreshed.
+                      </div>
+                    )}
+                    {boundariesJob.state.status === 'error' && (
+                      <div className="mt-1 text-[10px] text-rose-700">
+                        {boundariesJob.state.error?.includes('Run STT first')
+                          ? 'Please run STT first before refining boundaries.'
+                          : (boundariesJob.state.error ?? 'Boundary refinement failed.')}
+                      </div>
+                    )}
+                  </div>
 
                   <button className="mb-1.5 flex w-full items-center gap-2 rounded-md bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-800 ring-1 ring-indigo-200 hover:bg-indigo-100">
                     <Layers className="h-3.5 w-3.5"/>
